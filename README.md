@@ -29,7 +29,7 @@ npm install -g windowctl
 ### Go
 
 ```sh
-go install github.com/muthuishere/windowctl/cmd/windowctl@latest
+go install github.com/muthuishere/windowctl/src/cmd/windowctl@latest
 ```
 
 ### Binary (GitHub Releases)
@@ -131,13 +131,17 @@ task release    # Publish release via GoReleaser
 windowctl can be used as a Go library:
 
 ```go
-import "github.com/muthuishere/windowctl"
+import windowctl "github.com/muthuishere/windowctl/src"
 
 windows, err := windowctl.ListWindows(windowctl.Filter{Title: "chrome"})
 monitors, err := windowctl.ListMonitors()
 err = windowctl.Move(match, target)
 err = windowctl.Focus(match)
 ```
+
+> The repository keeps all Go source under `src/`; the package itself is
+> still named `windowctl`, so consumers use the import alias above and
+> call `windowctl.ListWindows` etc.
 
 ## License
 
