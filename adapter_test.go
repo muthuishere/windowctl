@@ -108,3 +108,11 @@ func TestFocusDelegatesToAdapter(t *testing.T) {
 		t.Fatalf("expected window 2 to be focused, got %q", a.focused)
 	}
 }
+
+func TestFocusReturnsErrNoMatchWhenFilterMatchesNothing(t *testing.T) {
+	a := &mockAdapter{windows: sampleWindows()}
+	err := focusWith(a, Match{Title: "nope"})
+	if !errors.Is(err, ErrNoMatch) {
+		t.Fatalf("expected ErrNoMatch, got %v", err)
+	}
+}

@@ -24,6 +24,8 @@ func main() {
 		monitorsCmd(os.Args[2:])
 	case "move":
 		moveCmd(os.Args[2:])
+	case "focus":
+		focusCmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 	default:
@@ -39,7 +41,8 @@ func usage(w io.Writer) {
 Usage:
   windowctl windows list [--title <s>] [--app <s>] [--json]
   windowctl monitors list [--json]
-  windowctl move (--title <s> | --app <s>) [--monitor <n>] (--zone <z> | --x <n> --y <n> --w <n> --h <n>)`)
+  windowctl move (--title <s> | --app <s>) [--monitor <n>] (--zone <z> | --x <n> --y <n> --w <n> --h <n>)
+  windowctl focus (--title <s> | --app <s>)`)
 }
 
 func windowsCmd(args []string) {
@@ -160,6 +163,23 @@ func moveCmd(args []string) {
 		err = windowctl.MoveCoords(match, monitorID, windowctl.Rect{X: *x, Y: *y, W: *w, H: *h})
 	}
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "windowctl:", err)
+		os.Exit(1)
+	}
+}
+
+func focusCmd(args []string) {
+	fs := flag.NewFlagSet("focus", flag.ExitOnError)
+	title := fs.String("title", "", "match by window title (case-insensitive substring)")
+	app := fs.String("app", "", "match by application name (case-insensitive)")
+	_ = fs.Parse(args)
+
+	if *title == "" && *app == "" {
+		fmt.Fprintln(os.Stderr, "windowctl focus: --title or --app is required")
+		os.Exit(2)
+	}
+
+	if err := windowctl.Focus(windowctl.Match{Title: *title, App: *app}); err != nil {
 		fmt.Fprintln(os.Stderr, "windowctl:", err)
 		os.Exit(1)
 	}
