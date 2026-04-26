@@ -1,0 +1,79 @@
+version: 2
+
+project_name: windowctl
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: windowctl
+    main: ./cmd/windowctl
+    binary: windowctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
+# When the macOS adapter (internal/adapter/darwin) starts using CGO and the
+# Accessibility / CoreGraphics frameworks, drop darwin from the `windowctl`
+# build above and add a CGO-enabled darwin build here:
+#
+#   - id: windowctl-darwin
+#     main: ./cmd/windowctl
+#     binary: windowctl
+#     env:
+#       - CGO_ENABLED=1
+#     goos: [darwin]
+#     goarch: [amd64, arm64]
+#     ldflags:
+#       - -s -w
+#       - -linkmode external
+#       - -extldflags "-framework ApplicationServices -framework CoreGraphics"
+#
+# That activates the §9.2 framework linker flags called for in
+# docs/specs/09-release-pipeline.md.
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+release:
+  github:
+    owner: muthuishere
+    name: windowctl
+  draft: false
+  prerelease: auto
+
+snapshot:
+  version_template: "{{ .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'

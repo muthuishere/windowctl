@@ -2,7 +2,10 @@
 
 > Part of the [windowctl OpenSpec capability set](./README.md).
 
-- **Status:** Implemented
+- **Status:** Partial — pipeline is wired and CGO-disabled cross-compiles
+  succeed; the macOS CGO linker-flag requirement is staged in
+  `.goreleaser.yaml` as a documented toggle and activates when the
+  macOS adapter starts using CGO.
 - **Source:** §9.1, §9.2
 - **Summary:** Cross-compile, checksum, and publish GitHub releases for
   macOS, Windows, and Linux on both `amd64` and `arm64`, orchestrated by
@@ -24,13 +27,20 @@
 - **THEN** GoReleaser produces binaries for `darwin`, `windows`, and
   `linux` on both `amd64` and `arm64`
 
-## Requirement: macOS CGO linker flags
+## Requirement: macOS CGO linker flags *(Pending — activates with macOS adapter CGO)*
 
 ### Scenario: macOS build links the required frameworks
 
-- **WHEN** the macOS binary is built
+- **WHEN** the macOS binary is built **and the macOS adapter uses CGO**
 - **THEN** CGO is enabled and the linker flags include
   `-framework ApplicationServices` and `-framework CoreGraphics`
+
+> The macOS adapter currently ships as a non-CGO scaffold (every method
+> returns `core.ErrNotImplemented`), so the release pipeline builds it
+> with `CGO_ENABLED=0` like the other platforms. `.goreleaser.yaml`
+> contains a commented-out CGO-enabled darwin build with the required
+> framework flags; flipping that block from a comment to a live build
+> entry is the work that moves this requirement to `Implemented`.
 
 ## Requirement: Checksums and GitHub release
 
