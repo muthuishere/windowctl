@@ -7,14 +7,13 @@ before:
     - go mod tidy
 
 builds:
-  - id: windowctl
+  - id: windowctl-nondarwin
     main: ./cmd/windowctl
     binary: windowctl
     env:
       - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
       - windows
     goarch:
       - amd64
@@ -25,24 +24,30 @@ builds:
       - -X main.commit={{ .Commit }}
       - -X main.date={{ .Date }}
 
-# When the macOS adapter (internal/adapter/darwin) starts using CGO and the
-# Accessibility / CoreGraphics frameworks, drop darwin from the `windowctl`
-# build above and add a CGO-enabled darwin build here:
-#
-#   - id: windowctl-darwin
-#     main: ./cmd/windowctl
-#     binary: windowctl
-#     env:
-#       - CGO_ENABLED=1
-#     goos: [darwin]
-#     goarch: [amd64, arm64]
-#     ldflags:
-#       - -s -w
-#       - -linkmode external
-#       - -extldflags "-framework ApplicationServices -framework CoreGraphics"
-#
-# That activates the §9.2 framework linker flags called for in
-# docs/specs/09-release-pipeline.md.
+  # darwin needs CGO because internal/adapter/darwin links CoreGraphics
+  # and CoreFoundation. Cross-compiling to darwin from a non-darwin host
+  # therefore requires a darwin C toolchain (osxcross etc.); on a real
+  # macOS host the system clang handles it transparently.
+  - id: windowctl-darwin
+    main: ./cmd/windowctl
+    binary: windowctl
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
+# When the macOS adapter wires the Accessibility API for Move/Focus, add
+# `-framework ApplicationServices` to the darwin ldflags above (the
+# CoreGraphics framework already covers the current ListWindows /
+# ListMonitors path).
 
 archives:
   - id: default

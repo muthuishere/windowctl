@@ -11,10 +11,9 @@
 #   - if: matrix.os == 'macos-latest'
 #     run: bash ./scripts/smoke-darwin.sh
 #
-# While the macOS adapter is stubbed (every method returns
-# ErrNotImplemented), the early exit below makes this script a no-op
-# rather than a hard fail, so it can be wired into CI now and start
-# exercising the real adapter the moment that adapter ships.
+# ListWindows / ListMonitors run against real CoreGraphics. Move and
+# Focus are still stubbed (Accessibility API wiring is the next macOS
+# slice), so the move step asserts ErrNotImplemented for now.
 
 set -euo pipefail
 
@@ -23,13 +22,9 @@ echo '== windowctl macOS smoke test =='
 # 1. Build the CLI.
 go build -o windowctl ./cmd/windowctl
 
-# 2. Skip gracefully while the macOS adapter is stubbed.
-list_output=$(./windowctl windows list 2>&1 || true)
-if echo "$list_output" | grep -qi 'not implemented'; then
-  echo 'macOS adapter is currently stubbed (ErrNotImplemented).'
-  echo 'Smoke test will run end-to-end once internal/adapter/darwin is wired up.'
-  exit 0
-fi
+# 2. Sanity: list returns *something* on a fresh runner. CG sees system
+#    UI windows even before we launch our test app.
+./windowctl windows list --json >/dev/null
 
 # 3. Launch a real application.
 osascript -e 'tell application "TextEdit" to activate'
@@ -53,11 +48,22 @@ if hit is None:
     print('TextEdit window not detected', file=sys.stderr)
     print(json.dumps(ws, indent=2), file=sys.stderr)
     sys.exit(1)
-print(f"Detected TextEdit: ID={hit['ID']}, Title='{hit.get('Title','')}'", flush=True)
+print(f"Detected TextEdit: ID={hit['ID']}, App='{hit.get('App','')}'", flush=True)
 PY
 
-# 5. Execute a move and verify no errors.
-./windowctl move --title TextEdit --x 100 --y 100 --w 800 --h 600
-echo 'Move command returned 0.'
+# 5. Move is still stubbed on macOS (Accessibility API not wired). Assert
+#    that we see the expected ErrNotImplemented rather than a silent pass
+#    or some surprise behaviour. Once Move is real, flip this block to
+#    require exit 0.
+if ./windowctl move --title TextEdit --x 100 --y 100 --w 800 --h 600 2>/tmp/wctl-move.err; then
+  echo 'unexpected: move succeeded while macOS adapter Move is stubbed'
+  exit 1
+fi
+if ! grep -qi 'not implemented' /tmp/wctl-move.err; then
+  echo 'unexpected error from move:'
+  cat /tmp/wctl-move.err
+  exit 1
+fi
+echo 'Move correctly returned ErrNotImplemented (macOS Accessibility wiring is the next slice).'
 
 echo '== Smoke test PASSED =='
