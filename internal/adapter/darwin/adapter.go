@@ -20,46 +20,47 @@ package darwin
 #include <CoreFoundation/CoreFoundation.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
-// All option/enum bit-flag combinations live in C so the Go side never has
-// to reason about CGWindowListOption typing or CFTypeRef pointer math.
+// Plain-old-data struct that Go can read directly. C owns the whole
+// CoreFoundation memory dance; Go never touches a CFTypeRef.
+typedef struct {
+    long   id;
+    long   pid;
+    char*  title;       // malloc'd UTF-8; may be NULL.
+    char*  app;         // malloc'd UTF-8; may be NULL.
+    int    has_bounds;
+    double x;
+    double y;
+    double w;
+    double h;
+} wctl_window_t;
 
-static CFArrayRef wctl_list_windows(void) {
-    return CGWindowListCopyWindowInfo(
-        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
-        kCGNullWindowID
-    );
-}
+typedef struct {
+    int    id_index;     // assigned position in caller's list
+    int    primary;      // 0/1
+    double x;
+    double y;
+    double w;
+    double h;
+} wctl_monitor_t;
 
-// Returns 0/1 for "is this CFTypeRef non-null" so Go callers don't compare
-// CFTypeRef-typed values directly.
-static int wctl_cf_is_null(CFTypeRef r) {
-    return r == NULL ? 1 : 0;
-}
-
-// Read a long-typed CFNumber out of a CFDictionary entry. Returns 0 if
-// the entry is missing or not a CFNumber.
-static long wctl_cf_long(CFDictionaryRef d, const char* key) {
-    CFStringRef k = CFStringCreateWithCString(NULL, key, kCFStringEncodingUTF8);
-    CFTypeRef v = CFDictionaryGetValue(d, k);
-    CFRelease(k);
+static long wctl_dict_long(CFDictionaryRef d, CFStringRef key) {
+    CFTypeRef v = CFDictionaryGetValue(d, key);
     if (v == NULL || CFGetTypeID(v) != CFNumberGetTypeID()) return 0;
     long out = 0;
     CFNumberGetValue((CFNumberRef)v, kCFNumberLongType, &out);
     return out;
 }
 
-// Read a CFString out of a CFDictionary entry as a freshly malloc'd UTF-8
-// C string. Caller frees. Returns NULL when missing.
-static char* wctl_cf_string_dup(CFDictionaryRef d, const char* key) {
-    CFStringRef k = CFStringCreateWithCString(NULL, key, kCFStringEncodingUTF8);
-    CFTypeRef v = CFDictionaryGetValue(d, k);
-    CFRelease(k);
+static char* wctl_dict_string(CFDictionaryRef d, CFStringRef key) {
+    CFTypeRef v = CFDictionaryGetValue(d, key);
     if (v == NULL || CFGetTypeID(v) != CFStringGetTypeID()) return NULL;
     CFStringRef s = (CFStringRef)v;
     CFIndex len = CFStringGetLength(s);
     CFIndex max = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8) + 1;
-    char* buf = (char*)malloc(max);
+    char* buf = (char*)malloc((size_t)max);
+    if (!buf) return NULL;
     if (!CFStringGetCString(s, buf, max, kCFStringEncodingUTF8)) {
         free(buf);
         return NULL;
@@ -67,11 +68,9 @@ static char* wctl_cf_string_dup(CFDictionaryRef d, const char* key) {
     return buf;
 }
 
-// Read CGRect from kCGWindowBounds (a CFDictionary describing X/Y/W/H).
-static int wctl_cf_window_bounds(CFDictionaryRef d, double* x, double* y, double* w, double* h) {
-    CFStringRef k = CFStringCreateWithCString(NULL, "kCGWindowBounds", kCFStringEncodingUTF8);
-    CFTypeRef v = CFDictionaryGetValue(d, k);
-    CFRelease(k);
+static int wctl_dict_bounds(CFDictionaryRef d, CFStringRef key,
+                            double* x, double* y, double* w, double* h) {
+    CFTypeRef v = CFDictionaryGetValue(d, key);
     if (v == NULL || CFGetTypeID(v) != CFDictionaryGetTypeID()) return 0;
     CGRect r;
     if (!CGRectMakeWithDictionaryRepresentation((CFDictionaryRef)v, &r)) return 0;
@@ -82,28 +81,93 @@ static int wctl_cf_window_bounds(CFDictionaryRef d, double* x, double* y, double
     return 1;
 }
 
-// Returns count of active displays, or -1 on error. Pass NULL/0 to probe
-// count, then call again with a pre-sized array to fill it.
-static int wctl_list_displays(CGDirectDisplayID* out, int cap) {
-    uint32_t count = 0;
-    if (out == NULL) {
-        if (CGGetActiveDisplayList(0, NULL, &count) != kCGErrorSuccess) return -1;
-        return (int)count;
+// Collect all on-screen windows. Returns count (>= 0) on success or -1 on
+// failure. On success *out is a malloc'd array of `count` entries; free
+// with wctl_free_windows(out, count).
+static int wctl_collect_windows(wctl_window_t** out) {
+    *out = NULL;
+    CFArrayRef arr = CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        kCGNullWindowID
+    );
+    if (arr == NULL) return -1;
+
+    CFIndex n = CFArrayGetCount(arr);
+    wctl_window_t* ws = NULL;
+    if (n > 0) {
+        ws = (wctl_window_t*)calloc((size_t)n, sizeof(wctl_window_t));
+        if (!ws) {
+            CFRelease(arr);
+            return -1;
+        }
     }
-    if (CGGetActiveDisplayList((uint32_t)cap, out, &count) != kCGErrorSuccess) return -1;
+
+    CFStringRef k_num    = CFSTR("kCGWindowNumber");
+    CFStringRef k_pid    = CFSTR("kCGWindowOwnerPID");
+    CFStringRef k_name   = CFSTR("kCGWindowName");
+    CFStringRef k_owner  = CFSTR("kCGWindowOwnerName");
+    CFStringRef k_bounds = CFSTR("kCGWindowBounds");
+
+    for (CFIndex i = 0; i < n; i++) {
+        const void* raw = CFArrayGetValueAtIndex(arr, i);
+        if (raw == NULL) continue;
+        CFDictionaryRef d = (CFDictionaryRef)raw;
+
+        ws[i].id     = wctl_dict_long(d, k_num);
+        ws[i].pid    = wctl_dict_long(d, k_pid);
+        ws[i].title  = wctl_dict_string(d, k_name);
+        ws[i].app    = wctl_dict_string(d, k_owner);
+        ws[i].has_bounds = wctl_dict_bounds(
+            d, k_bounds, &ws[i].x, &ws[i].y, &ws[i].w, &ws[i].h
+        );
+    }
+
+    CFRelease(arr);
+    *out = ws;
+    return (int)n;
+}
+
+static void wctl_free_windows(wctl_window_t* ws, int count) {
+    if (ws == NULL) return;
+    for (int i = 0; i < count; i++) {
+        if (ws[i].title) free(ws[i].title);
+        if (ws[i].app)   free(ws[i].app);
+    }
+    free(ws);
+}
+
+// Collect all active monitors. Same memory ownership pattern as
+// wctl_collect_windows but no nested allocations, so caller just calls
+// free() on the returned pointer.
+static int wctl_collect_monitors(wctl_monitor_t** out) {
+    *out = NULL;
+    uint32_t count = 0;
+    if (CGGetActiveDisplayList(0, NULL, &count) != kCGErrorSuccess) return -1;
+    if (count == 0) return 0;
+
+    CGDirectDisplayID* ids = (CGDirectDisplayID*)calloc(count, sizeof(CGDirectDisplayID));
+    if (!ids) return -1;
+    if (CGGetActiveDisplayList(count, ids, &count) != kCGErrorSuccess) {
+        free(ids);
+        return -1;
+    }
+
+    wctl_monitor_t* ms = (wctl_monitor_t*)calloc(count, sizeof(wctl_monitor_t));
+    if (!ms) { free(ids); return -1; }
+
+    CGDirectDisplayID main = CGMainDisplayID();
+    for (uint32_t i = 0; i < count; i++) {
+        CGRect r = CGDisplayBounds(ids[i]);
+        ms[i].id_index = (int)i;
+        ms[i].primary = (ids[i] == main) ? 1 : 0;
+        ms[i].x = r.origin.x;
+        ms[i].y = r.origin.y;
+        ms[i].w = r.size.width;
+        ms[i].h = r.size.height;
+    }
+    free(ids);
+    *out = ms;
     return (int)count;
-}
-
-static CGDirectDisplayID wctl_main_display(void) {
-    return CGMainDisplayID();
-}
-
-static void wctl_display_bounds(CGDirectDisplayID id, double* x, double* y, double* w, double* h) {
-    CGRect r = CGDisplayBounds(id);
-    *x = r.origin.x;
-    *y = r.origin.y;
-    *w = r.size.width;
-    *h = r.size.height;
 }
 */
 import "C"
@@ -120,31 +184,32 @@ type Adapter struct{}
 func New() *Adapter { return &Adapter{} }
 
 func (a *Adapter) ListWindows() ([]core.Window, error) {
-	arr := C.wctl_list_windows()
-	if C.wctl_cf_is_null(C.CFTypeRef(arr)) != 0 {
-		return nil, fmt.Errorf("CGWindowListCopyWindowInfo returned null")
+	var raw *C.wctl_window_t
+	n := int(C.wctl_collect_windows(&raw))
+	if n < 0 {
+		return nil, fmt.Errorf("CGWindowListCopyWindowInfo failed")
 	}
-	defer C.CFRelease(C.CFTypeRef(arr))
+	if n == 0 {
+		return nil, nil
+	}
+	defer C.wctl_free_windows(raw, C.int(n))
 
-	n := int(C.CFArrayGetCount(arr))
+	ws := unsafe.Slice(raw, n)
 	out := make([]core.Window, 0, n)
 	for i := 0; i < n; i++ {
-		raw := C.CFArrayGetValueAtIndex(arr, C.CFIndex(i))
-		if raw == nil {
-			continue
-		}
-		d := C.CFDictionaryRef(raw)
-
 		w := core.Window{
-			ID:    fmt.Sprintf("%d", int64(cfDictLong(d, "kCGWindowNumber"))),
-			Title: cfDictString(d, "kCGWindowName"),
-			App:   cfDictString(d, "kCGWindowOwnerName"),
-			PID:   int(cfDictLong(d, "kCGWindowOwnerPID")),
+			ID:    fmt.Sprintf("%d", int64(ws[i].id)),
+			PID:   int(ws[i].pid),
+			Title: cStringOrEmpty(ws[i].title),
+			App:   cStringOrEmpty(ws[i].app),
 		}
-
-		var x, y, ww, hh C.double
-		if C.wctl_cf_window_bounds(d, &x, &y, &ww, &hh) != 0 {
-			w.Bounds = core.Rect{X: int(x), Y: int(y), W: int(ww), H: int(hh)}
+		if ws[i].has_bounds != 0 {
+			w.Bounds = core.Rect{
+				X: int(ws[i].x),
+				Y: int(ws[i].y),
+				W: int(ws[i].w),
+				H: int(ws[i].h),
+			}
 		}
 		out = append(out, w)
 	}
@@ -152,30 +217,26 @@ func (a *Adapter) ListWindows() ([]core.Window, error) {
 }
 
 func (a *Adapter) ListMonitors() ([]core.Monitor, error) {
-	count := int(C.wctl_list_displays(nil, 0))
-	if count < 0 {
-		return nil, fmt.Errorf("CGGetActiveDisplayList: count probe failed")
+	var raw *C.wctl_monitor_t
+	n := int(C.wctl_collect_monitors(&raw))
+	if n < 0 {
+		return nil, fmt.Errorf("CGGetActiveDisplayList failed")
 	}
-	if count == 0 {
+	if n == 0 {
 		return nil, nil
 	}
-	ids := make([]C.CGDirectDisplayID, count)
-	got := int(C.wctl_list_displays(&ids[0], C.int(count)))
-	if got < 0 {
-		return nil, fmt.Errorf("CGGetActiveDisplayList: list failed")
-	}
-	main := C.wctl_main_display()
-	out := make([]core.Monitor, 0, got)
-	for i := 0; i < got; i++ {
-		var x, y, w, h C.double
-		C.wctl_display_bounds(ids[i], &x, &y, &w, &h)
+	defer C.free(unsafe.Pointer(raw))
+
+	ms := unsafe.Slice(raw, n)
+	out := make([]core.Monitor, 0, n)
+	for i := 0; i < n; i++ {
 		out = append(out, core.Monitor{
-			ID:      i,
-			X:       int(x),
-			Y:       int(y),
-			Width:   int(w),
-			Height:  int(h),
-			Primary: ids[i] == main,
+			ID:      int(ms[i].id_index),
+			X:       int(ms[i].x),
+			Y:       int(ms[i].y),
+			Width:   int(ms[i].w),
+			Height:  int(ms[i].h),
+			Primary: ms[i].primary != 0,
 		})
 	}
 	return out, nil
@@ -189,19 +250,9 @@ func (a *Adapter) Focus(id string) error {
 	return core.ErrNotImplemented
 }
 
-func cfDictLong(d C.CFDictionaryRef, key string) C.long {
-	ckey := C.CString(key)
-	defer C.free(unsafe.Pointer(ckey))
-	return C.wctl_cf_long(d, ckey)
-}
-
-func cfDictString(d C.CFDictionaryRef, key string) string {
-	ckey := C.CString(key)
-	defer C.free(unsafe.Pointer(ckey))
-	cstr := C.wctl_cf_string_dup(d, ckey)
-	if cstr == nil {
+func cStringOrEmpty(p *C.char) string {
+	if p == nil {
 		return ""
 	}
-	defer C.free(unsafe.Pointer(cstr))
-	return C.GoString(cstr)
+	return C.GoString(p)
 }
