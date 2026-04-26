@@ -42,6 +42,42 @@ func Focus(match Match) error {
 	return focusWith(defaultAdapter, match)
 }
 
+// MoveZone moves the window matched by `match` into the given zone on the
+// resolved monitor. monitorID is optional: when nil, the monitor is
+// auto-resolved as the one containing the majority of the window's area
+// (FR-MOV-03). zoneStr accepts enum (e.g. "2B") or split (e.g. "3:1") form.
+func MoveZone(match Match, monitorID *int, zoneStr string) error {
+	return moveZoneWith(defaultAdapter, match, monitorID, zoneStr)
+}
+
+func moveZoneWith(a Adapter, match Match, monitorID *int, zoneStr string) error {
+	zone, err := ParseZone(zoneStr)
+	if err != nil {
+		return err
+	}
+	w, err := matchOne(a, match)
+	if err != nil {
+		return err
+	}
+	monitors, err := a.ListMonitors()
+	if err != nil {
+		return err
+	}
+	var mon Monitor
+	if monitorID != nil {
+		mon, err = findMonitor(monitors, *monitorID)
+		if err != nil {
+			return err
+		}
+	} else {
+		mon, err = resolveCurrentMonitor(w, monitors)
+		if err != nil {
+			return err
+		}
+	}
+	return a.Move(w.ID, zone.Rect(mon))
+}
+
 func listWindowsWith(a Adapter, filter Filter) ([]Window, error) {
 	ws, err := a.ListWindows()
 	if err != nil {
