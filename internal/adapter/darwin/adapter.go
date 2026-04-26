@@ -14,12 +14,28 @@
 package darwin
 
 /*
-#cgo CFLAGS:  -x objective-c
 #cgo LDFLAGS: -framework CoreGraphics -framework CoreFoundation -framework ApplicationServices
 
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <stdint.h>
 #include <stdlib.h>
+
+// All option/enum bit-flag combinations live in C so the Go side never has
+// to reason about CGWindowListOption typing or CFTypeRef pointer math.
+
+static CFArrayRef wctl_list_windows(void) {
+    return CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        kCGNullWindowID
+    );
+}
+
+// Returns 0/1 for "is this CFTypeRef non-null" so Go callers don't compare
+// CFTypeRef-typed values directly.
+static int wctl_cf_is_null(CFTypeRef r) {
+    return r == NULL ? 1 : 0;
+}
 
 // Read a long-typed CFNumber out of a CFDictionary entry. Returns 0 if
 // the entry is missing or not a CFNumber.
@@ -65,6 +81,30 @@ static int wctl_cf_window_bounds(CFDictionaryRef d, double* x, double* y, double
     *h = r.size.height;
     return 1;
 }
+
+// Returns count of active displays, or -1 on error. Pass NULL/0 to probe
+// count, then call again with a pre-sized array to fill it.
+static int wctl_list_displays(CGDirectDisplayID* out, int cap) {
+    uint32_t count = 0;
+    if (out == NULL) {
+        if (CGGetActiveDisplayList(0, NULL, &count) != kCGErrorSuccess) return -1;
+        return (int)count;
+    }
+    if (CGGetActiveDisplayList((uint32_t)cap, out, &count) != kCGErrorSuccess) return -1;
+    return (int)count;
+}
+
+static CGDirectDisplayID wctl_main_display(void) {
+    return CGMainDisplayID();
+}
+
+static void wctl_display_bounds(CGDirectDisplayID id, double* x, double* y, double* w, double* h) {
+    CGRect r = CGDisplayBounds(id);
+    *x = r.origin.x;
+    *y = r.origin.y;
+    *w = r.size.width;
+    *h = r.size.height;
+}
 */
 import "C"
 
@@ -80,19 +120,20 @@ type Adapter struct{}
 func New() *Adapter { return &Adapter{} }
 
 func (a *Adapter) ListWindows() ([]core.Window, error) {
-	arr := C.CGWindowListCopyWindowInfo(
-		C.kCGWindowListOptionOnScreenOnly|C.kCGWindowListExcludeDesktopElements,
-		C.kCGNullWindowID,
-	)
-	if arr == 0 {
+	arr := C.wctl_list_windows()
+	if C.wctl_cf_is_null(C.CFTypeRef(arr)) != 0 {
 		return nil, fmt.Errorf("CGWindowListCopyWindowInfo returned null")
 	}
 	defer C.CFRelease(C.CFTypeRef(arr))
 
-	n := C.CFArrayGetCount(arr)
-	out := make([]core.Window, 0, int(n))
-	for i := C.CFIndex(0); i < n; i++ {
-		d := C.CFDictionaryRef(C.CFArrayGetValueAtIndex(arr, i))
+	n := int(C.CFArrayGetCount(arr))
+	out := make([]core.Window, 0, n)
+	for i := 0; i < n; i++ {
+		raw := C.CFArrayGetValueAtIndex(arr, C.CFIndex(i))
+		if raw == nil {
+			continue
+		}
+		d := C.CFDictionaryRef(raw)
 
 		w := core.Window{
 			ID:    fmt.Sprintf("%d", int64(cfDictLong(d, "kCGWindowNumber"))),
@@ -111,28 +152,30 @@ func (a *Adapter) ListWindows() ([]core.Window, error) {
 }
 
 func (a *Adapter) ListMonitors() ([]core.Monitor, error) {
-	var count C.uint32_t
-	if err := C.CGGetActiveDisplayList(0, nil, &count); err != 0 {
-		return nil, fmt.Errorf("CGGetActiveDisplayList: count probe failed (%d)", int(err))
+	count := int(C.wctl_list_displays(nil, 0))
+	if count < 0 {
+		return nil, fmt.Errorf("CGGetActiveDisplayList: count probe failed")
 	}
 	if count == 0 {
 		return nil, nil
 	}
-	ids := make([]C.CGDirectDisplayID, int(count))
-	if err := C.CGGetActiveDisplayList(count, &ids[0], &count); err != 0 {
-		return nil, fmt.Errorf("CGGetActiveDisplayList: list failed (%d)", int(err))
+	ids := make([]C.CGDirectDisplayID, count)
+	got := int(C.wctl_list_displays(&ids[0], C.int(count)))
+	if got < 0 {
+		return nil, fmt.Errorf("CGGetActiveDisplayList: list failed")
 	}
-	main := C.CGMainDisplayID()
-	out := make([]core.Monitor, 0, int(count))
-	for i, id := range ids {
-		bounds := C.CGDisplayBounds(id)
+	main := C.wctl_main_display()
+	out := make([]core.Monitor, 0, got)
+	for i := 0; i < got; i++ {
+		var x, y, w, h C.double
+		C.wctl_display_bounds(ids[i], &x, &y, &w, &h)
 		out = append(out, core.Monitor{
 			ID:      i,
-			X:       int(bounds.origin.x),
-			Y:       int(bounds.origin.y),
-			Width:   int(bounds.size.width),
-			Height:  int(bounds.size.height),
-			Primary: id == main,
+			X:       int(x),
+			Y:       int(y),
+			Width:   int(w),
+			Height:  int(h),
+			Primary: ids[i] == main,
 		})
 	}
 	return out, nil
