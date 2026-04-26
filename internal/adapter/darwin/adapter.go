@@ -9,7 +9,7 @@
 // linker flags from §9.2) is a follow-up slice.
 package darwin
 
-import "github.com/muthuishere/windowctl/src/internal/core"
+import "github.com/muthuishere/windowctl/internal/core"
 
 type Adapter struct{}
 

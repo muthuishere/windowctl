@@ -2,6 +2,6 @@
 
 package windowctl
 
-import winadapter "github.com/muthuishere/windowctl/src/internal/adapter/windows"
+import winadapter "github.com/muthuishere/windowctl/internal/adapter/windows"
 
 func newPlatformAdapter() Adapter { return winadapter.New() }

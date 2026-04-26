@@ -7,7 +7,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	windowctl "github.com/muthuishere/windowctl/src"
+	windowctl "github.com/muthuishere/windowctl"
 )
 
 func main() {

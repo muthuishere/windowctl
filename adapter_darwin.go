@@ -2,6 +2,6 @@
 
 package windowctl
 
-import darwinadapter "github.com/muthuishere/windowctl/src/internal/adapter/darwin"
+import darwinadapter "github.com/muthuishere/windowctl/internal/adapter/darwin"
 
 func newPlatformAdapter() Adapter { return darwinadapter.New() }

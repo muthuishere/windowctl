@@ -6,7 +6,7 @@ package windowctl
 import (
 	"strings"
 
-	"github.com/muthuishere/windowctl/src/internal/core"
+	"github.com/muthuishere/windowctl/internal/core"
 )
 
 type (

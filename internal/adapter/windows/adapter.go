@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/muthuishere/windowctl/src/internal/core"
+	"github.com/muthuishere/windowctl/internal/core"
 	"golang.org/x/sys/windows"
 )
 
