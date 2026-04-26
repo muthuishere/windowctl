@@ -37,9 +37,9 @@ sleep 2
 
 # 4. Detect TextEdit via `windowctl windows list --json`.
 raw=$(./windowctl windows list --json)
-echo "$raw" | python3 - <<'PY'
-import json, sys
-ws = json.load(sys.stdin)
+WCTL_JSON="$raw" python3 - <<'PY'
+import json, os, sys
+ws = json.loads(os.environ['WCTL_JSON'])
 hit = next(
     (w for w in ws if 'TextEdit' in (w.get('App') or '') or 'TextEdit' in (w.get('Title') or '')),
     None,
