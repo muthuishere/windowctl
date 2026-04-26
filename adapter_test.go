@@ -43,17 +43,30 @@ func sampleWindows() []Window {
 	}
 }
 
-func TestApplyFilterByTitleIsCaseInsensitive(t *testing.T) {
-	out := applyFilter(sampleWindows(), Filter{Title: "chrome"})
+func TestApplyFilterByTitleIsPartialAndCaseInsensitive(t *testing.T) {
+	out := applyFilter(sampleWindows(), Filter{Title: "ChRoMe"})
 	if len(out) != 1 || out[0].ID != "1" {
 		t.Fatalf("expected the chrome window, got %+v", out)
 	}
 }
 
-func TestApplyFilterByAppIsCaseInsensitive(t *testing.T) {
+func TestApplyFilterByAppIsCaseInsensitiveExactMatch(t *testing.T) {
 	out := applyFilter(sampleWindows(), Filter{App: "slack"})
 	if len(out) != 1 || out[0].ID != "3" {
-		t.Fatalf("expected the slack window, got %+v", out)
+		t.Fatalf("expected the slack window by exact app match, got %+v", out)
+	}
+
+	out = applyFilter(sampleWindows(), Filter{App: "Sla"})
+	if len(out) != 0 {
+		t.Fatalf("expected no match for app prefix (exact match required), got %+v", out)
+	}
+}
+
+func TestApplyFilterCombinesTitleAndApp(t *testing.T) {
+	ws := append(sampleWindows(), Window{ID: "4", Title: "Dashboards", App: "Google Chrome"})
+	out := applyFilter(ws, Filter{Title: "inbox", App: "Google Chrome"})
+	if len(out) != 1 || out[0].ID != "1" {
+		t.Fatalf("expected only the chrome+inbox window, got %+v", out)
 	}
 }
 

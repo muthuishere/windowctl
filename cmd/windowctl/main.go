@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"text/tabwriter"
 
@@ -12,7 +13,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		usage()
+		usage(os.Stderr)
 		os.Exit(2)
 	}
 
@@ -22,16 +23,16 @@ func main() {
 	case "monitors":
 		monitorsCmd(os.Args[2:])
 	case "-h", "--help", "help":
-		usage()
+		usage(os.Stdout)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", os.Args[1])
-		usage()
+		usage(os.Stderr)
 		os.Exit(2)
 	}
 }
 
-func usage() {
-	fmt.Fprintln(os.Stderr, `windowctl — cross-platform window management
+func usage(w io.Writer) {
+	fmt.Fprintln(w, `windowctl — cross-platform window management
 
 Usage:
   windowctl windows list [--title <s>] [--app <s>] [--json]
@@ -55,16 +56,10 @@ func windowsCmd(args []string) {
 		os.Exit(1)
 	}
 	if *asJSON {
-		_ = json.NewEncoder(os.Stdout).Encode(ws)
+		_ = printWindowsJSON(os.Stdout, ws)
 		return
 	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tTITLE\tAPP\tPID\tMONITOR\tBOUNDS")
-	for _, w := range ws {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%dx%d+%d+%d\n",
-			w.ID, w.Title, w.App, w.PID, w.Monitor, w.Bounds.W, w.Bounds.H, w.Bounds.X, w.Bounds.Y)
-	}
-	_ = tw.Flush()
+	printWindowsTable(os.Stdout, ws)
 }
 
 func monitorsCmd(args []string) {
@@ -82,13 +77,35 @@ func monitorsCmd(args []string) {
 		os.Exit(1)
 	}
 	if *asJSON {
-		_ = json.NewEncoder(os.Stdout).Encode(ms)
+		_ = printMonitorsJSON(os.Stdout, ms)
 		return
 	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	printMonitorsTable(os.Stdout, ms)
+}
+
+func printWindowsTable(out io.Writer, ws []windowctl.Window) {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tTITLE\tAPP\tPID\tMONITOR\tBOUNDS")
+	for _, w := range ws {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%dx%d+%d+%d\n",
+			w.ID, w.Title, w.App, w.PID, w.Monitor, w.Bounds.W, w.Bounds.H, w.Bounds.X, w.Bounds.Y)
+	}
+	_ = tw.Flush()
+}
+
+func printWindowsJSON(out io.Writer, ws []windowctl.Window) error {
+	return json.NewEncoder(out).Encode(ws)
+}
+
+func printMonitorsTable(out io.Writer, ms []windowctl.Monitor) {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tX\tY\tWIDTH\tHEIGHT\tPRIMARY")
 	for _, m := range ms {
 		fmt.Fprintf(tw, "%d\t%d\t%d\t%d\t%d\t%t\n", m.ID, m.X, m.Y, m.Width, m.Height, m.Primary)
 	}
 	_ = tw.Flush()
+}
+
+func printMonitorsJSON(out io.Writer, ms []windowctl.Monitor) error {
+	return json.NewEncoder(out).Encode(ms)
 }
