@@ -18,10 +18,10 @@
 ### Scenario: All business logic lives in the library
 
 - **WHEN** the CLI binary handles any subcommand (`windows list`,
-  `monitors list`, `move`, `focus`, `apply`)
+  `monitors list`, `move`, `focus`)
 - **THEN** it parses flags and delegates to the library
-- **AND** it contains no zone-math, monitor-resolution, window-matching,
-  or layout-parsing logic of its own
+- **AND** it contains no zone-math, monitor-resolution, or
+  window-matching logic of its own
 
 ## Requirement: Core logic is testable without OS dependencies *(Implemented from v1)*
 
