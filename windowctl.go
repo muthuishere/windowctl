@@ -50,6 +50,14 @@ func MoveZone(match Match, monitorID *int, zoneStr string) error {
 	return moveZoneWith(defaultAdapter, match, monitorID, zoneStr)
 }
 
+// MoveCoords moves the matched window using raw coordinates. When monitorID
+// is nil, bounds are interpreted as absolute global coordinates; when
+// monitorID is non-nil, bounds are interpreted as relative to that
+// monitor's origin (FR-MOV-02).
+func MoveCoords(match Match, monitorID *int, bounds Rect) error {
+	return moveCoordsWith(defaultAdapter, match, monitorID, bounds)
+}
+
 func moveZoneWith(a Adapter, match Match, monitorID *int, zoneStr string) error {
 	zone, err := ParseZone(zoneStr)
 	if err != nil {
@@ -76,6 +84,31 @@ func moveZoneWith(a Adapter, match Match, monitorID *int, zoneStr string) error 
 		}
 	}
 	return a.Move(w.ID, zone.Rect(mon))
+}
+
+func moveCoordsWith(a Adapter, match Match, monitorID *int, bounds Rect) error {
+	w, err := matchOne(a, match)
+	if err != nil {
+		return err
+	}
+	final := bounds
+	if monitorID != nil {
+		monitors, err := a.ListMonitors()
+		if err != nil {
+			return err
+		}
+		mon, err := findMonitor(monitors, *monitorID)
+		if err != nil {
+			return err
+		}
+		final = Rect{
+			X: mon.X + bounds.X,
+			Y: mon.Y + bounds.Y,
+			W: bounds.W,
+			H: bounds.H,
+		}
+	}
+	return a.Move(w.ID, final)
 }
 
 func listWindowsWith(a Adapter, filter Filter) ([]Window, error) {

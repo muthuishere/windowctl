@@ -39,7 +39,7 @@ func usage(w io.Writer) {
 Usage:
   windowctl windows list [--title <s>] [--app <s>] [--json]
   windowctl monitors list [--json]
-  windowctl move (--title <s> | --app <s>) [--monitor <n>] --zone <z>`)
+  windowctl move (--title <s> | --app <s>) [--monitor <n>] (--zone <z> | --x <n> --y <n> --w <n> --h <n>)`)
 }
 
 func windowsCmd(args []string) {
@@ -119,14 +119,31 @@ func moveCmd(args []string) {
 	app := fs.String("app", "", "match by application name (case-insensitive)")
 	monitor := fs.Int("monitor", -1, "target monitor ID (omit to auto-resolve)")
 	zone := fs.String("zone", "", "target zone (1A,1B,2A..2D or N:M)")
+	x := fs.Int("x", 0, "target x (with --monitor: relative; otherwise: absolute)")
+	y := fs.Int("y", 0, "target y (with --monitor: relative; otherwise: absolute)")
+	w := fs.Int("w", 0, "target width")
+	h := fs.Int("h", 0, "target height")
 	_ = fs.Parse(args)
 
 	if *title == "" && *app == "" {
 		fmt.Fprintln(os.Stderr, "windowctl move: --title or --app is required")
 		os.Exit(2)
 	}
-	if *zone == "" {
-		fmt.Fprintln(os.Stderr, "windowctl move: --zone is required")
+
+	coordSet := false
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "x", "y", "w", "h":
+			coordSet = true
+		}
+	})
+
+	if *zone != "" && coordSet {
+		fmt.Fprintln(os.Stderr, "windowctl move: --zone and --x/--y/--w/--h are mutually exclusive")
+		os.Exit(2)
+	}
+	if *zone == "" && !coordSet {
+		fmt.Fprintln(os.Stderr, "windowctl move: either --zone or --x/--y/--w/--h is required")
 		os.Exit(2)
 	}
 
@@ -135,7 +152,13 @@ func moveCmd(args []string) {
 		monitorID = monitor
 	}
 
-	err := windowctl.MoveZone(windowctl.Match{Title: *title, App: *app}, monitorID, *zone)
+	match := windowctl.Match{Title: *title, App: *app}
+	var err error
+	if *zone != "" {
+		err = windowctl.MoveZone(match, monitorID, *zone)
+	} else {
+		err = windowctl.MoveCoords(match, monitorID, windowctl.Rect{X: *x, Y: *y, W: *w, H: *h})
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "windowctl:", err)
 		os.Exit(1)
