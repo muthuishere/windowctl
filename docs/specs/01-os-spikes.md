@@ -70,3 +70,14 @@ contract is real.
 - **THEN** they contain no Win32, Cocoa, or Xlib references
 - **AND** all OS calls go through a Go interface implemented by the
   platform adapter modules
+
+## Tasks
+
+| Task | Purpose |
+|------|---------|
+| `task build` | Builds the per-OS CLI binary that exercises the platform adapter |
+| `task test` | Runs the OS-mockable core unit tests |
+
+> Per-OS adapter validation against real windows runs in
+> [`ci-test-matrix`](./10-ci-test-matrix.md), not via a standalone
+> Taskfile target.

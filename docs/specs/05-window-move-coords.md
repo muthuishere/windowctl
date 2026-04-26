@@ -34,3 +34,10 @@
 - **THEN** the matcher rules and error scenarios from
   [`window-move-zone`](./04-window-move-zone.md) apply identically (no
   matcher → error, no match → error, invalid monitor → error)
+
+## Tasks
+
+| Task | Purpose |
+|------|---------|
+| `task build` | Builds the CLI binary that exposes `windowctl move` |
+| `task test` | Runs unit tests for absolute-vs-monitor-relative coordinate interpretation |

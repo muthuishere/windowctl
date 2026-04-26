@@ -17,3 +17,10 @@
 
 - **WHEN** the title or app filter matches no window
 - **THEN** the command exits non-zero with a descriptive message
+
+## Tasks
+
+| Task | Purpose |
+|------|---------|
+| `task build` | Builds the CLI binary that exposes `windowctl focus` |
+| `task test` | Runs unit tests for the focus matcher and error contract |

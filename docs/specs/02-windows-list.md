@@ -49,3 +49,10 @@
 - **WHEN** `windowctl windows list` is invoked on a standard desktop
 - **THEN** the command completes within 500 ms (per §8.1)
 - **AND** no polling loop is involved — the OS API is queried directly
+
+## Tasks
+
+| Task | Purpose |
+|------|---------|
+| `task build` | Builds the CLI binary that exposes `windowctl windows list` |
+| `task test` | Runs unit tests for filter parsing and output formatting |

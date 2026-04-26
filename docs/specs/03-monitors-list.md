@@ -21,3 +21,10 @@
 - **WHEN** the user runs `windowctl monitors list --json`
 - **THEN** output is a JSON array of monitor objects with the same fields
   as the table view
+
+## Tasks
+
+| Task | Purpose |
+|------|---------|
+| `task build` | Builds the CLI binary that exposes `windowctl monitors list` |
+| `task test` | Runs unit tests for monitor enumeration and output formatting |

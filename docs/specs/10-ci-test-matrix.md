@@ -35,3 +35,14 @@
   available)
 - **AND** multi-monitor behavior is acknowledged as not
   integration-tested in CI (GitHub runners are single-display)
+
+## Tasks
+
+| Task | Purpose |
+|------|---------|
+| `task build` | Runs in CI on each OS to verify cross-platform build |
+| `task test` | Runs the unit-test matrix on each OS |
+| `task lint` | Runs the linter |
+
+> The Windows real-window smoke test is a CI-workflow step, not a
+> standalone Taskfile target.

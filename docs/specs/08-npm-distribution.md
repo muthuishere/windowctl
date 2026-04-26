@@ -31,3 +31,13 @@
 - **THEN** the choice between bundling all platform binaries vs.
   downloading the matching binary on first use is **TBD** (OI-05) and
   must be resolved before this spec moves to `Implemented`
+
+## Tasks
+
+| Task | Purpose |
+|------|---------|
+| `task snapshot` | Produces the per-platform binaries that the npm JS wrapper invokes |
+
+> §9.1 does not currently define an npm-packaging task. That gap is
+> part of why this spec is `Partial`; resolving OI-05 (bundle vs.
+> download) will likely add the corresponding `task` target.

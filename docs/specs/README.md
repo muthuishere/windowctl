@@ -58,6 +58,10 @@ Each slice file follows the same shape:
 - **`## Requirement: <name>`** — one per behavioral requirement in scope.
 - **`### Scenario: <name>`** — Given/When/Then-style bullets under each
   requirement.
+- **`## Tasks`** — small Taskfile-style table mapping the spec back to
+  the `task <name>` command(s) that build, test, or otherwise verify
+  it. Where no current task covers a part of the spec, that gap is
+  called out explicitly under the table.
 
 Status values match the index legend above. When a single spec mixes
 implemented and planned requirements, per-requirement status is annotated

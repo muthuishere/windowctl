@@ -68,3 +68,10 @@
 
 - **WHEN** `--monitor` references a monitor that does not exist
 - **THEN** the command exits non-zero with a descriptive message
+
+## Tasks
+
+| Task | Purpose |
+|------|---------|
+| `task build` | Builds the CLI binary that exposes `windowctl move` |
+| `task test` | Runs unit tests for zone math, monitor auto-resolution, matcher rules, and the error contract |

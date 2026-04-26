@@ -55,3 +55,15 @@
   `github.com/muthuishere/windowctl`
 - **THEN** transitive dependencies do not include the CLI's flag/parsing
   packages (per LIB-03)
+
+## Tasks
+
+| Task | Purpose |
+|------|---------|
+| `task build` | Builds the CLI, which already delegates to the internal library |
+| `task test` | Runs the library's OS-mockable unit tests |
+
+> No current Taskfile target verifies the **exported** public surface or
+> the no-CLI-deps guarantee. Closing that gap (e.g. an importer-smoke
+> task) is part of the work that moves the `Public API surface` and
+> `Library importability` requirements from `Planned` to `Implemented`.

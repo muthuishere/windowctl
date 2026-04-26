@@ -39,3 +39,16 @@
 - **WHEN** a release is published
 - **THEN** SHA-256 checksums are generated for every binary and the
   binaries are attached to a GitHub release
+
+## Tasks
+
+| Task | Purpose |
+|------|---------|
+| `task build` | Builds the CLI binary for the current platform |
+| `task test` | Runs all tests prior to release |
+| `task lint` | Runs the linter prior to release |
+| `task snapshot` | Builds a snapshot release for all platforms |
+| `task release` | Publishes a GitHub release via GoReleaser |
+
+> This spec **is** the Taskfile contract — every entry above is one of
+> the required tasks listed in §9.1.
