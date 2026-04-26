@@ -1,0 +1,27 @@
+version: '3'
+
+tasks:
+  build:
+    desc: Build the CLI binary for the current platform
+    cmds:
+      - go build -o bin/windowctl ./cmd/windowctl
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test ./...
+
+  lint:
+    desc: Run go vet across the module
+    cmds:
+      - go vet ./...
+
+  snapshot:
+    desc: Build a snapshot release for all platforms (requires goreleaser)
+    cmds:
+      - goreleaser release --snapshot --clean
+
+  release:
+    desc: Publish a release via GoReleaser
+    cmds:
+      - goreleaser release --clean

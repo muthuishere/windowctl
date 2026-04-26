@@ -1,0 +1,9 @@
+/bin/
+/dist/
+*.exe
+.DS_Store
+windowctl
+!cmd/windowctl/
+/npm/native/
+/npm/node_modules/
+/npm/package-lock.json

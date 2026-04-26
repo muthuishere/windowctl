@@ -1,0 +1,40 @@
+{
+  "name": "windowctl",
+  "version": "0.1.0",
+  "description": "Cross-platform CLI for managing desktop windows and monitors",
+  "homepage": "https://github.com/muthuishere/windowctl",
+  "bugs": {
+    "url": "https://github.com/muthuishere/windowctl/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muthuishere/windowctl.git"
+  },
+  "bin": {
+    "windowctl": "bin/windowctl.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "dependencies": {
+    "tar": "^7.4.0"
+  }
+}

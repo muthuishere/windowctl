@@ -14,22 +14,31 @@ This spec is the foundation every later capability depends on. It is not a
 user-facing CLI command on its own; it is the per-OS proof that the adapter
 contract is real.
 
-## Requirement: macOS adapter spike
+## Requirement: macOS adapter spike *(Partial — list paths real, move/focus stubbed)*
 
-### Scenario: Enumerate, move, and focus a real window on macOS
+### Scenario: Enumerate windows and monitors on macOS
 
-- **WHEN** the macOS adapter is built and Accessibility permission is
-  granted
-- **THEN** it can list windows via CoreGraphics, and move/resize/focus the
-  matched window via the Accessibility API
-- **AND** the operations are exposed through the same Go interface used by
-  the other platforms
+- **WHEN** the macOS adapter is built (CGO enabled, `-framework
+  CoreGraphics -framework CoreFoundation`)
+- **THEN** `ListWindows` enumerates real windows via
+  `CGWindowListCopyWindowInfo` and `ListMonitors` enumerates displays
+  via `CGGetActiveDisplayList`, exposed through the same Go interface
+  used by the other platforms
 
-### Scenario: Accessibility permission denied on macOS
+### Scenario: Move and Focus on macOS
 
-- **WHEN** the macOS adapter is invoked without Accessibility permission
-- **THEN** the operation exits non-zero with an instruction to grant
-  Accessibility access
+- **WHEN** the macOS adapter is asked to move or focus a window
+- **THEN** the call returns `core.ErrNotImplemented` until the
+  Accessibility (AX) wiring lands as a follow-up slice
+- **AND** the macOS smoke test (`scripts/smoke-darwin.sh`) asserts
+  this explicitly so the gap stays loud rather than silent
+
+### Scenario: Accessibility permission denied on macOS *(future work)*
+
+- **WHEN** the macOS adapter (post-AX wiring) is invoked without
+  Accessibility permission
+- **THEN** the operation will exit non-zero with an instruction to
+  grant Accessibility access
 
 ## Requirement: Windows adapter spike
 
