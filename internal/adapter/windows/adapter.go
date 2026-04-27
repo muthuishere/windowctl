@@ -109,6 +109,15 @@ func (a *Adapter) Focus(id string) error {
 	return nil
 }
 
+// RequestAccessibility is a no-op on Windows. The Win32 windowing APIs
+// used by the adapter (SetForegroundWindow, MoveWindow) gate on session
+// / privilege rather than a per-process trust grant comparable to
+// macOS Accessibility. The CLI keeps the method on the interface so
+// `windowctl permissions` exists on all three platforms; here it just
+// returns nil and the CLI prints a "not required" message based on
+// runtime.GOOS.
+func (a *Adapter) RequestAccessibility() error { return nil }
+
 func parseHwnd(id string) (uintptr, error) {
 	var n uint64
 	if _, err := fmt.Sscanf(id, "%d", &n); err != nil {

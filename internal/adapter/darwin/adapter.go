@@ -7,20 +7,64 @@
 // (window owner names / IDs / sizes always come back; titles are
 // suppressed by the OS until the prompt is granted).
 //
-// Move and Focus stay stubbed because they need Accessibility (AX)
-// permission, which is granted per-process and is not available on a
-// fresh GitHub Actions runner. Wiring them to AXUIElementSetAttribute
-// is the next slice of work for this OS.
+// Move and Focus are wired against the Accessibility (AX) API in
+// ApplicationServices. Each call:
+//
+//  1. Pre-flights AXIsProcessTrustedWithOptions — if false, returns
+//     core.ErrAccessibilityDenied immediately. The AX prompt is NOT
+//     triggered by ListWindows/ListMonitors or at adapter
+//     construction; it only fires the first time a user invokes Move
+//     or Focus.
+//  2. Re-fetches the CG window entry by ID (no adapter-level cache
+//     of any prior ListWindows result) to get the owner PID and
+//     current bounds.
+//  3. Walks AXUIElementCreateApplication(pid) → kAXWindowsAttribute
+//     and disambiguates the target by matching kAXTitleAttribute and
+//     position+size against the CG bounds (small pixel tolerance to
+//     paper over the well-known CG-vs-AX shadow-geometry delta).
+//  4. For Move: AXUIElementSetAttributeValue for kAXPosition then
+//     kAXSize. For Focus: AXUIElementPerformAction kAXRaiseAction
+//     followed by [NSRunningApplication activateWithOptions:] on the
+//     owning process so the app itself comes forward.
+//
+// All CoreFoundation / Accessibility memory ownership lives in C
+// helpers; Go only sees POD return codes and POD result structs.
 package darwin
 
 /*
-#cgo LDFLAGS: -framework CoreGraphics -framework CoreFoundation -framework ApplicationServices
+#cgo LDFLAGS: -framework CoreGraphics -framework CoreFoundation -framework ApplicationServices -framework AppKit
 
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <ApplicationServices/ApplicationServices.h>
+#include <objc/runtime.h>
+#include <objc/message.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+// Return codes shared by wctl_ax_set_bounds and wctl_ax_focus.
+//   >= 0  success
+//   -1    AX permission denied
+//   -2    CG window with the given ID no longer exists
+//   -3    AX walk found no matching window for the resolved PID
+//   -4    AXUIElementSetAttributeValue / PerformAction failed
+//   -5    internal allocation failure
+#define WCTL_AX_OK            0
+#define WCTL_AX_ERR_DENIED    -1
+#define WCTL_AX_ERR_NOTFOUND  -2
+#define WCTL_AX_ERR_NOWINDOW  -3
+#define WCTL_AX_ERR_SETFAIL   -4
+#define WCTL_AX_ERR_INTERNAL  -5
+
+// Pixel tolerance for matching CG bounds against AX position+size
+// when title is empty or duplicated. CG reports the visual frame;
+// AX reports the structural frame, which on macOS differs by the
+// title-bar height (~28px) plus drop shadow. 60px is a pragmatic
+// upper bound that absorbs the skew without admitting unrelated
+// windows.
+#define WCTL_AX_BOUNDS_TOL    60.0
 
 // Plain-old-data struct that Go can read directly. C owns the whole
 // CoreFoundation memory dance; Go never touches a CFTypeRef.
@@ -169,6 +213,305 @@ static int wctl_collect_monitors(wctl_monitor_t** out) {
     *out = ms;
     return (int)count;
 }
+
+// ----------------------------------------------------------------------
+// AX (Accessibility) helpers — Move / Focus
+// ----------------------------------------------------------------------
+
+// wctl_ax_check returns 1 if the current process is trusted by AX,
+// 0 otherwise. We pass kAXTrustedCheckOptionPrompt = false so the
+// system permission dialog only fires when the user actually invokes
+// Move/Focus and is willing to grant it via System Settings — we
+// never silently surprise users from a list path.
+//
+// Note: passing false for the prompt option still won't trigger the
+// dialog from a CLI; the system shows the prompt only for processes
+// it can present a UI for. Either way, we just inspect the boolean.
+static int wctl_ax_check(void) {
+    const void* keys[]   = { kAXTrustedCheckOptionPrompt };
+    const void* values[] = { kCFBooleanFalse };
+    CFDictionaryRef opts = CFDictionaryCreate(
+        kCFAllocatorDefault, keys, values, 1,
+        &kCFCopyStringDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks
+    );
+    Boolean trusted = AXIsProcessTrustedWithOptions(opts);
+    if (opts) CFRelease(opts);
+    return trusted ? 1 : 0;
+}
+
+// wctl_ax_request is the prompt=true sibling of wctl_ax_check, used
+// only by the user-invoked `windowctl permissions` subcommand. macOS
+// shows its system "wants to control your computer" dialog the first
+// time this is called from a given parent process (TCC is keyed per
+// parent process). The returned int is the post-call trust state —
+// 1 trusted, 0 still denied. The user typically has to grant access
+// in System Settings and re-run windowctl, so 0 is a routine outcome
+// rather than an error.
+static int wctl_ax_request(void) {
+    const void* keys[]   = { kAXTrustedCheckOptionPrompt };
+    const void* values[] = { kCFBooleanTrue };
+    CFDictionaryRef opts = CFDictionaryCreate(
+        kCFAllocatorDefault, keys, values, 1,
+        &kCFCopyStringDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks
+    );
+    Boolean trusted = AXIsProcessTrustedWithOptions(opts);
+    if (opts) CFRelease(opts);
+    return trusted ? 1 : 0;
+}
+
+// wctl_window_for_id scans CGWindowListCopyWindowInfo for the entry
+// matching `id` and writes the owner PID and bounds + a copy of the
+// window title into the out-parameters. Returns 1 on success, 0 if
+// the window is gone, -1 on internal failure.
+//
+// `out_title` is malloc'd UTF-8; caller frees with free(). May be
+// NULL on success if the CG entry has no title (untitled documents,
+// system overlays, etc.) — the AX matcher handles that case.
+static int wctl_window_for_id(long id, long* out_pid,
+                              double* out_x, double* out_y,
+                              double* out_w, double* out_h,
+                              char** out_title) {
+    *out_title = NULL;
+    CFArrayRef arr = CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        kCGNullWindowID
+    );
+    if (arr == NULL) return -1;
+
+    CFStringRef k_num    = CFSTR("kCGWindowNumber");
+    CFStringRef k_pid    = CFSTR("kCGWindowOwnerPID");
+    CFStringRef k_name   = CFSTR("kCGWindowName");
+    CFStringRef k_bounds = CFSTR("kCGWindowBounds");
+
+    int found = 0;
+    CFIndex n = CFArrayGetCount(arr);
+    for (CFIndex i = 0; i < n; i++) {
+        const void* raw = CFArrayGetValueAtIndex(arr, i);
+        if (raw == NULL) continue;
+        CFDictionaryRef d = (CFDictionaryRef)raw;
+        if (wctl_dict_long(d, k_num) != id) continue;
+
+        *out_pid = wctl_dict_long(d, k_pid);
+        if (!wctl_dict_bounds(d, k_bounds, out_x, out_y, out_w, out_h)) {
+            CFRelease(arr);
+            return -1;
+        }
+        *out_title = wctl_dict_string(d, k_name);
+        found = 1;
+        break;
+    }
+
+    CFRelease(arr);
+    return found ? 1 : 0;
+}
+
+// wctl_ax_resolve walks AXUIElementCreateApplication(pid)'s
+// kAXWindowsAttribute looking for the window matching the supplied
+// CG hints. Returns the AXUIElementRef on success (caller owns;
+// CFRelease when done) or NULL on miss / failure.
+//
+// Matching strategy:
+//   1) If the CG title is non-empty, prefer the first AX window
+//      whose kAXTitleAttribute string-equals it. macOS guarantees
+//      title equality is the strongest practical disambiguator, and
+//      doing it first sidesteps the well-known CG-vs-AX bounds
+//      skew (CG reports the visual frame minus shadow; AX reports
+//      the structural frame, off by the title-bar height ~28px).
+//   2) If multiple AX windows share the same title (rare; FR-MOV-04
+//      first-match), break the tie by picking the one whose AX
+//      position+size are within WCTL_AX_BOUNDS_TOL of the CG
+//      bounds. If still tied, take the first — consistent with
+//      kAXWindowsAttribute ordering (z-order top-down).
+//   3) If the CG title is empty/NULL (some windows hide the title
+//      until Screen Recording is granted), fall back to bounds-only
+//      matching with the same tolerance.
+static AXUIElementRef wctl_ax_resolve(pid_t pid, const char* cg_title,
+                                       double cx, double cy,
+                                       double cw, double ch) {
+    AXUIElementRef app = AXUIElementCreateApplication(pid);
+    if (!app) return NULL;
+
+    CFArrayRef windows = NULL;
+    AXError err = AXUIElementCopyAttributeValue(
+        app, kAXWindowsAttribute, (CFTypeRef*)&windows
+    );
+    if (err != kAXErrorSuccess || windows == NULL) {
+        if (windows) CFRelease(windows);
+        CFRelease(app);
+        return NULL;
+    }
+
+    CFStringRef cg_title_cf = NULL;
+    if (cg_title != NULL && cg_title[0] != '\0') {
+        cg_title_cf = CFStringCreateWithCString(
+            kCFAllocatorDefault, cg_title, kCFStringEncodingUTF8
+        );
+    }
+
+    AXUIElementRef title_hit       = NULL; // first title match
+    AXUIElementRef title_geom_hit  = NULL; // title + bounds match
+    AXUIElementRef geom_hit        = NULL; // bounds match (no-title fallback)
+
+    CFIndex n = CFArrayGetCount(windows);
+    for (CFIndex i = 0; i < n; i++) {
+        AXUIElementRef w = (AXUIElementRef)CFArrayGetValueAtIndex(windows, i);
+        if (!w) continue;
+
+        // Title check.
+        int title_match = 0;
+        if (cg_title_cf != NULL) {
+            CFStringRef ax_title = NULL;
+            AXUIElementCopyAttributeValue(w, kAXTitleAttribute, (CFTypeRef*)&ax_title);
+            if (ax_title != NULL) {
+                title_match = (CFStringCompare(ax_title, cg_title_cf, 0) == kCFCompareEqualTo);
+                CFRelease(ax_title);
+            }
+        }
+
+        // Bounds check (best-effort; some windows refuse AX position queries).
+        int geom_match = 0;
+        AXValueRef pos = NULL;
+        AXValueRef siz = NULL;
+        AXUIElementCopyAttributeValue(w, kAXPositionAttribute, (CFTypeRef*)&pos);
+        AXUIElementCopyAttributeValue(w, kAXSizeAttribute,    (CFTypeRef*)&siz);
+        CGPoint p = {0, 0};
+        CGSize  s = {0, 0};
+        if (pos && siz &&
+            AXValueGetValue(pos, kAXValueCGPointType, &p) &&
+            AXValueGetValue(siz, kAXValueCGSizeType,  &s)) {
+            double dx = p.x - cx; if (dx < 0) dx = -dx;
+            double dy = p.y - cy; if (dy < 0) dy = -dy;
+            double dw = s.width  - cw; if (dw < 0) dw = -dw;
+            double dh = s.height - ch; if (dh < 0) dh = -dh;
+            geom_match = (dx <= WCTL_AX_BOUNDS_TOL && dy <= WCTL_AX_BOUNDS_TOL &&
+                          dw <= WCTL_AX_BOUNDS_TOL && dh <= WCTL_AX_BOUNDS_TOL);
+        }
+        if (pos) CFRelease(pos);
+        if (siz) CFRelease(siz);
+
+        if (title_match && geom_match && title_geom_hit == NULL) {
+            title_geom_hit = w;
+        }
+        if (title_match && title_hit == NULL) {
+            title_hit = w;
+        }
+        if (cg_title_cf == NULL && geom_match && geom_hit == NULL) {
+            geom_hit = w;
+        }
+    }
+
+    AXUIElementRef chosen = title_geom_hit;
+    if (chosen == NULL) chosen = title_hit;
+    if (chosen == NULL) chosen = geom_hit;
+    if (chosen != NULL) CFRetain(chosen);
+
+    if (cg_title_cf) CFRelease(cg_title_cf);
+    CFRelease(windows);
+    CFRelease(app);
+    return chosen;
+}
+
+// wctl_ax_set_bounds resolves the AX window for the given CG id and
+// applies position+size. See WCTL_AX_ERR_* for return codes.
+static int wctl_ax_set_bounds(long id, double nx, double ny, double nw, double nh) {
+    if (!wctl_ax_check()) return WCTL_AX_ERR_DENIED;
+
+    long pid = 0;
+    double cx = 0, cy = 0, cw = 0, ch = 0;
+    char* title = NULL;
+    int got = wctl_window_for_id(id, &pid, &cx, &cy, &cw, &ch, &title);
+    if (got < 0) { if (title) free(title); return WCTL_AX_ERR_INTERNAL; }
+    if (got == 0) { if (title) free(title); return WCTL_AX_ERR_NOTFOUND; }
+
+    AXUIElementRef w = wctl_ax_resolve((pid_t)pid, title, cx, cy, cw, ch);
+    if (title) free(title);
+    if (!w) return WCTL_AX_ERR_NOWINDOW;
+
+    CGPoint p = { nx, ny };
+    CGSize  s = { nw, nh };
+    AXValueRef pos = AXValueCreate(kAXValueCGPointType, &p);
+    AXValueRef siz = AXValueCreate(kAXValueCGSizeType,  &s);
+    int rc = WCTL_AX_OK;
+    if (!pos || !siz) {
+        rc = WCTL_AX_ERR_INTERNAL;
+    } else {
+        // Set order workaround for macOS AX cross-display moves:
+        // when the move spans displays AND resizes, a single
+        // pos→size pass leaves position unchanged because
+        // kAXSizeAttribute internally re-clamps the window to its
+        // current display. The robust sequence is two full passes
+        // of pos→size→pos with short yields between writes to let
+        // WindowServer commit the intermediate state. This recipe
+        // is what Rectangle (PrivateAPI.swift moveWindow) and
+        // yabai's window_manager_set_window_frame use.
+        AXError last_pos_err  = kAXErrorSuccess;
+        AXError last_size_err = kAXErrorSuccess;
+        for (int pass = 0; pass < 2; pass++) {
+            AXError ep1 = AXUIElementSetAttributeValue(w, kAXPositionAttribute, pos);
+            usleep(10000);
+            AXError es1 = AXUIElementSetAttributeValue(w, kAXSizeAttribute,     siz);
+            usleep(10000);
+            AXError ep2 = AXUIElementSetAttributeValue(w, kAXPositionAttribute, pos);
+            if (ep1 != kAXErrorSuccess) last_pos_err  = ep1;
+            if (es1 != kAXErrorSuccess) last_size_err = es1;
+            if (ep2 != kAXErrorSuccess) last_pos_err  = ep2;
+        }
+        if (last_pos_err != kAXErrorSuccess || last_size_err != kAXErrorSuccess) {
+            rc = WCTL_AX_ERR_SETFAIL;
+        }
+    }
+    if (pos) CFRelease(pos);
+    if (siz) CFRelease(siz);
+    CFRelease(w);
+    return rc;
+}
+
+// wctl_ax_focus raises the resolved AX window and activates the
+// owning NSRunningApplication so the app itself comes forward (not
+// just the window within an already-foreground app).
+//
+// We reach NSRunningApplication via the Objective-C runtime
+// (objc_msgSend) to keep this file pure C — no .m file, no Swift.
+// NSApplicationActivateIgnoringOtherApps == 2.
+static int wctl_ax_focus(long id) {
+    if (!wctl_ax_check()) return WCTL_AX_ERR_DENIED;
+
+    long pid = 0;
+    double cx = 0, cy = 0, cw = 0, ch = 0;
+    char* title = NULL;
+    int got = wctl_window_for_id(id, &pid, &cx, &cy, &cw, &ch, &title);
+    if (got < 0) { if (title) free(title); return WCTL_AX_ERR_INTERNAL; }
+    if (got == 0) { if (title) free(title); return WCTL_AX_ERR_NOTFOUND; }
+
+    AXUIElementRef w = wctl_ax_resolve((pid_t)pid, title, cx, cy, cw, ch);
+    if (title) free(title);
+    if (!w) return WCTL_AX_ERR_NOWINDOW;
+
+    AXError raise_err = AXUIElementPerformAction(w, kAXRaiseAction);
+    CFRelease(w);
+    if (raise_err != kAXErrorSuccess) return WCTL_AX_ERR_SETFAIL;
+
+    // [NSRunningApplication runningApplicationWithProcessIdentifier:pid]
+    // — reached via the Objective-C runtime so this file stays pure C.
+    Class cls = objc_getClass("NSRunningApplication");
+    if (cls != NULL) {
+        SEL selFor = sel_registerName("runningApplicationWithProcessIdentifier:");
+        SEL selAct = sel_registerName("activateWithOptions:");
+        // Cast objc_msgSend to typed function pointers so we don't trip
+        // the strict-prototype warnings on recent clang/Xcode.
+        typedef struct objc_object* (*msg_obj_class_pid_t)(Class, SEL, pid_t);
+        typedef signed char (*msg_bool_obj_opts_t)(struct objc_object*, SEL, unsigned long);
+        struct objc_object* app =
+            ((msg_obj_class_pid_t)objc_msgSend)(cls, selFor, (pid_t)pid);
+        if (app != NULL) {
+            // NSApplicationActivateIgnoringOtherApps = 1 << 1 = 2
+            ((msg_bool_obj_opts_t)objc_msgSend)(app, selAct, 2UL);
+        }
+    }
+    return WCTL_AX_OK;
+}
 */
 import "C"
 
@@ -243,11 +586,71 @@ func (a *Adapter) ListMonitors() ([]core.Monitor, error) {
 }
 
 func (a *Adapter) Move(id string, b core.Rect) error {
-	return core.ErrNotImplemented
+	cgID, err := parseCGWindowID(id)
+	if err != nil {
+		return err
+	}
+	rc := int(C.wctl_ax_set_bounds(
+		C.long(cgID),
+		C.double(b.X), C.double(b.Y),
+		C.double(b.W), C.double(b.H),
+	))
+	return translateAXReturn(rc, id, "move")
 }
 
 func (a *Adapter) Focus(id string) error {
-	return core.ErrNotImplemented
+	cgID, err := parseCGWindowID(id)
+	if err != nil {
+		return err
+	}
+	rc := int(C.wctl_ax_focus(C.long(cgID)))
+	return translateAXReturn(rc, id, "focus")
+}
+
+// RequestAccessibility triggers the macOS AX trust check WITH prompt
+// enabled. This is the only path in windowctl that asks the system to
+// surface its "wants to control your computer" dialog. Returns
+// core.ErrAccessibilityDenied when the post-call trust state is still
+// false, nil when granted. See docs/specs/11-permissions-subcommand.md
+// and the wctl_ax_request C helper for context on why this is gated
+// behind an explicit user-invoked subcommand rather than fired at
+// startup or from list paths.
+func (a *Adapter) RequestAccessibility() error {
+	if int(C.wctl_ax_request()) == 1 {
+		return nil
+	}
+	return core.ErrAccessibilityDenied
+}
+
+// parseCGWindowID matches the public Window.ID contract — a decimal
+// CGWindowID string. Returning a typed error here means callers see
+// the same shape Windows/Linux do for malformed IDs.
+func parseCGWindowID(id string) (int64, error) {
+	var n int64
+	if _, err := fmt.Sscanf(id, "%d", &n); err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid macOS window id %q", id)
+	}
+	return n, nil
+}
+
+// translateAXReturn converts the WCTL_AX_ERR_* return codes from the
+// C helpers into typed Go errors. See the macro block in the C side
+// for the code → meaning mapping.
+func translateAXReturn(rc int, id, op string) error {
+	switch {
+	case rc >= 0:
+		return nil
+	case rc == -1:
+		return core.ErrAccessibilityDenied
+	case rc == -2:
+		return fmt.Errorf("%w: window %s no longer exists (it may have been closed between list and %s)", core.ErrNoMatch, id, op)
+	case rc == -3:
+		return fmt.Errorf("%w: window %s is gone from the AX tree (its app may have quit before %s)", core.ErrNoMatch, id, op)
+	case rc == -4:
+		return fmt.Errorf("windowctl darwin: AX %s of window %s failed", op, id)
+	default:
+		return fmt.Errorf("windowctl darwin: AX %s of window %s failed (rc=%d)", op, id, rc)
+	}
 }
 
 func cStringOrEmpty(p *C.char) string {

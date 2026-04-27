@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"text/tabwriter"
 
 	windowctl "github.com/muthuishere/windowctl"
@@ -26,6 +28,8 @@ func main() {
 		moveCmd(os.Args[2:])
 	case "focus":
 		focusCmd(os.Args[2:])
+	case "permissions":
+		permissionsCmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 	default:
@@ -42,7 +46,8 @@ Usage:
   windowctl windows list [--title <s>] [--app <s>] [--json]
   windowctl monitors list [--json]
   windowctl move (--title <s> | --app <s>) [--monitor <n>] (--zone <z> | --x <n> --y <n> --w <n> --h <n>)
-  windowctl focus (--title <s> | --app <s>)`)
+  windowctl focus (--title <s> | --app <s>)
+  windowctl permissions`)
 }
 
 func windowsCmd(args []string) {
@@ -183,4 +188,51 @@ func focusCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "windowctl:", err)
 		os.Exit(1)
 	}
+}
+
+// permissionsCmd is the `windowctl permissions` entry point. Per
+// docs/specs/11-permissions-subcommand.md it triggers the macOS AX
+// trust prompt (the only place in windowctl that does so) and is a
+// no-op on linux/windows. Real work happens in runPermissions, which
+// is split out so it is unit-testable without spawning the binary or
+// touching the real adapter.
+func permissionsCmd(_ []string) {
+	rc := runPermissions(os.Stdout, os.Stderr, runtime.GOOS, windowctl.RequestAccessibility)
+	if rc != 0 {
+		os.Exit(rc)
+	}
+}
+
+// runPermissions encapsulates the platform-conditional logic for the
+// permissions subcommand so the side-effecting bits (the actual AX
+// call, os.Exit) can be injected by tests.
+//
+//   - On darwin: invokes requestFn (the real adapter call). nil →
+//     prints "granted" to stdout and returns 0. ErrAccessibilityDenied
+//     → prints the actionable denial message to stderr and returns 1.
+//     Any other error → surfaces it on stderr and returns 1.
+//   - On linux / windows: prints a one-line "not required on {os}"
+//     message and returns 0. requestFn is still invoked so adapter
+//     no-op stubs stay exercised, but its result is intentionally
+//     ignored on these platforms.
+func runPermissions(stdout, stderr io.Writer, goos string, requestFn func() error) int {
+	if goos != "darwin" {
+		// Invoke for symmetry — adapters are no-op on non-darwin —
+		// but the user-visible message is platform-derived.
+		_ = requestFn()
+		fmt.Fprintf(stdout, "Accessibility permission: not required on %s\n", goos)
+		return 0
+	}
+
+	err := requestFn()
+	if err == nil {
+		fmt.Fprintln(stdout, "Accessibility permission: granted")
+		return 0
+	}
+	if errors.Is(err, windowctl.ErrAccessibilityDenied) {
+		fmt.Fprintln(stderr, "Accessibility permission: denied — grant access in System Settings → Privacy & Security → Accessibility, then re-run")
+		return 1
+	}
+	fmt.Fprintln(stderr, "windowctl permissions:", err)
+	return 1
 }

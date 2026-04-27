@@ -22,10 +22,10 @@ task release    # goreleaser release --clean
 
 Single test: `go test ./... -run TestApplyFilterByTitleIsPartialAndCaseInsensitive`. Tests are in the repo root package (`windowctl`) and `cmd/windowctl`; the per-OS adapter packages have no unit tests — they're validated via the smoke scripts in CI.
 
-Real-window smoke tests (run automatically by `.github/workflows/ci.yaml` on the matching runner; can be run locally on the right OS):
+Real-window smoke tests (run automatically by `.github/workflows/ci.yaml` via `task smoke-darwin` / `task smoke-windows` on the matching runner; the workflow installs `task` via `arduino/setup-task@v2`):
 
-- `bash ./scripts/smoke-darwin.sh` — builds CLI, launches TextEdit, verifies `windows list` detects it, asserts `move` returns `ErrNotImplemented` (see macOS gap below).
-- `pwsh ./scripts/smoke-windows.ps1` — builds CLI, launches Notepad, verifies `windows list` detects it and `move` succeeds.
+- `task smoke-darwin` — builds CLI, launches TextEdit via LaunchServices (`open -a`), polls `windowctl windows list` until detected (10s budget), then asserts the AX-denied error path by default. Set `WCTL_SMOKE_AX=1` (after granting AX in System Settings → Privacy & Security → Accessibility) to assert the success path instead — bounds within `WCTL_AX_TOLERANCE` (default 10px).
+- `task smoke-windows` — builds CLI, launches Notepad, verifies `windows list` detects it and `move` succeeds.
 
 Module is Go 1.24, single dep `golang.org/x/sys`.
 
@@ -38,11 +38,11 @@ Three layers, with build-tag-isolated platform code:
 3. **`internal/core`** — OS-agnostic `Window`/`Monitor`/`Rect`/`Filter`/`Match`/`Target` types and the `Adapter` interface. Exists *only* to break the import cycle between the public package and the per-OS adapters; nothing else should live here.
 4. **`internal/adapter/{darwin,linux,windows}`** — one `Adapter` implementation per OS. Selected at link time by `adapter_darwin.go` / `adapter_linux.go` / `adapter_windows.go` (each with the matching `//go:build` tag) which call `newPlatformAdapter()`.
 
-The adapter interface is intentionally tiny (`ListWindows`, `ListMonitors`, `Move`, `Focus`). Anything that can be expressed as composition of those four primitives belongs in the public package, not the adapters.
+The adapter interface is intentionally tiny (`ListWindows`, `ListMonitors`, `Move`, `Focus`, `RequestAccessibility`). Anything that can be expressed as composition of those primitives belongs in the public package, not the adapters. `RequestAccessibility` is a no-op on linux/windows and the only AX-prompting call site on darwin — surfaced through the `windowctl permissions` subcommand.
 
 ### Per-OS notes
 
-- **darwin** (`internal/adapter/darwin/adapter.go`): CGO against CoreGraphics + CoreFoundation + ApplicationServices. All CoreFoundation memory management lives in C helpers (`wctl_collect_windows`, `wctl_collect_monitors`); Go only iterates POD struct arrays via `unsafe.Slice`. **`Move` and `Focus` are intentionally stubbed and return `core.ErrNotImplemented`** — the Accessibility (AX) wiring is the next slice. The smoke script asserts this gap explicitly so it stays loud. When you wire AX, also flip the failure assertion in `scripts/smoke-darwin.sh`.
+- **darwin** (`internal/adapter/darwin/adapter.go`): CGO against CoreGraphics + CoreFoundation + ApplicationServices + AppKit. ListWindows / ListMonitors use CG; Move / Focus / RequestAccessibility use the Accessibility (AX) API via `AXUIElementSetAttributeValue` (position+size sandwich for cross-display moves) and `AXUIElementPerformAction(kAXRaiseAction)` + `NSRunningApplication activateWithOptions:` for focus (the latter reached via `objc_msgSend` so the file stays pure C — no `.m` or Swift). All CFRetain/CFRelease and AX lifetime is owned by the C helpers (`wctl_collect_windows`, `wctl_collect_monitors`, `wctl_ax_check`, `wctl_ax_request`, `wctl_window_for_id`, `wctl_ax_resolve`, `wctl_ax_set_bounds`, `wctl_ax_focus`); Go only iterates POD struct arrays via `unsafe.Slice`. The CGWindowID → AXUIElementRef bridge is a per-call AX walk under the owner PID, disambiguated by title + bounds (no caching, no `_AXUIElementGetWindow` private SPI). Move/Focus return `core.ErrAccessibilityDenied` when AX permission is missing — `windowctl permissions` is the discoverable opt-in for granting it. AX prompt only fires from `windowctl permissions` or the lazy guard inside Move/Focus, never from `windows list`.
 - **windows** (`internal/adapter/windows/adapter.go`): `user32.dll` via `golang.org/x/sys/windows`. `EnumWindows` callback for listing; `ListMonitors` currently returns only the primary display via `GetSystemMetrics` — multi-monitor enumeration is a planned follow-up.
 - **linux** (`internal/adapter/linux/adapter.go`): shells out to `wmctrl` (list/move/focus) and `xrandr` (monitors). Native X11 via Xlib is planned. Wayland is best-effort.
 

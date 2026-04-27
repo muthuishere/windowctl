@@ -18,7 +18,7 @@ higher-level capability is built. Everything else builds on it.
 
 | # | Spec | Status | Source requirements |
 |---|------|--------|---------------------|
-| 1 | [`os-spikes`](./01-os-spikes.md) | Partial | §7, §7.1, §10.3 |
+| 1 | [`os-spikes`](./01-os-spikes.md) | Implemented | §7, §7.1, §10.3 |
 | 2 | [`windows-list`](./02-windows-list.md) | Implemented | FR-WIN-01, FR-OUT-01, FR-OUT-02, §11 |
 | 3 | [`monitors-list`](./03-monitors-list.md) | Implemented | FR-MON-01, FR-OUT-01, FR-OUT-02 |
 | 4 | [`window-move-zone`](./04-window-move-zone.md) | Implemented | FR-MOV-01, FR-MOV-03, FR-MOV-04, §4.3.1, §4.3.2, §11 |
@@ -28,6 +28,7 @@ higher-level capability is built. Everything else builds on it.
 | 8 | [`npm-distribution`](./08-npm-distribution.md) | Partial | §9.3, OI-05 |
 | 9 | [`release-pipeline`](./09-release-pipeline.md) | Partial | §9.1, §9.2 |
 | 10 | [`ci-test-matrix`](./10-ci-test-matrix.md) | Partial | §10.1, §10.2, §10.3, §10.4 |
+| 11 | [`permissions-subcommand`](./11-permissions-subcommand.md) | Implemented | §7.2, §11 |
 
 **Status legend:** `Implemented` · `Partial` · `Planned` · `Not planned`.
 

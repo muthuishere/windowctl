@@ -109,6 +109,15 @@ func (a *Adapter) Focus(id string) error {
 	return nil
 }
 
+// RequestAccessibility is a no-op on Linux. X11 / wmctrl do not require
+// a per-process trust grant comparable to macOS Accessibility — the
+// permission model is the display-server connection itself, which
+// either works or fails on the underlying calls. The CLI surface keeps
+// the method on the interface so `windowctl permissions` remains
+// available cross-platform; here it just returns nil and the CLI
+// prints a "not required" message based on runtime.GOOS.
+func (a *Adapter) RequestAccessibility() error { return nil }
+
 func stripUnit(s string) string {
 	for i, r := range s {
 		if r < '0' || r > '9' {

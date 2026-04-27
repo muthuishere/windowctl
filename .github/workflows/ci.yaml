@@ -21,10 +21,16 @@ jobs:
       - run: go vet ./...
       - run: go build ./...
       - run: go test ./...
+      - name: Install Task
+        if: matrix.os == 'macos-latest' || matrix.os == 'windows-latest'
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Windows real-window smoke test
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        run: ./scripts/smoke-windows.ps1
+        run: task smoke-windows
       - name: macOS real-window smoke test
         if: matrix.os == 'macos-latest'
-        run: bash ./scripts/smoke-darwin.sh
+        run: task smoke-darwin

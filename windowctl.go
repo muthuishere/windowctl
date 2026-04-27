@@ -20,8 +20,9 @@ type (
 )
 
 var (
-	ErrNotImplemented = core.ErrNotImplemented
-	ErrNoMatch        = core.ErrNoMatch
+	ErrNotImplemented      = core.ErrNotImplemented
+	ErrNoMatch             = core.ErrNoMatch
+	ErrAccessibilityDenied = core.ErrAccessibilityDenied
 )
 
 var defaultAdapter Adapter = newPlatformAdapter()
@@ -40,6 +41,26 @@ func Move(match Match, target Target) error {
 
 func Focus(match Match) error {
 	return focusWith(defaultAdapter, match)
+}
+
+// RequestAccessibility asks the platform adapter to verify (and on
+// macOS, prompt for) the privileges needed for Move / Focus. It is
+// the public entry point invoked by the `windowctl permissions`
+// subcommand; see docs/specs/11-permissions-subcommand.md.
+//
+// On macOS this triggers the AX trust check with prompt=true, which
+// causes the system to display its "wants to control your computer"
+// dialog the first time it is called from a given parent process
+// (TCC is keyed per parent process). Returns ErrAccessibilityDenied
+// when the post-call trust state is still false.
+//
+// On Linux and Windows this is a no-op and always returns nil.
+func RequestAccessibility() error {
+	return requestAccessibilityWith(defaultAdapter)
+}
+
+func requestAccessibilityWith(a Adapter) error {
+	return a.RequestAccessibility()
 }
 
 // MoveZone moves the window matched by `match` into the given zone on the
