@@ -1,21 +1,45 @@
 #!/usr/bin/env node
+// Launcher shim for @muthuishere/windowctl.
+// Resolves the installed platform sub-package and execs its native binary.
+
 'use strict';
 
 const { spawn } = require('child_process');
-const path = require('path');
-const fs = require('fs');
 
-const isWin = process.platform === 'win32';
-const binary = isWin ? 'windowctl.exe' : 'windowctl';
-const binPath = path.join(__dirname, '..', 'native', binary);
+const SUPPORTED = {
+  'darwin-arm64': '@muthuishere/windowctl-darwin-arm64',
+  'darwin-x64': '@muthuishere/windowctl-darwin-x64',
+  'linux-arm64': '@muthuishere/windowctl-linux-arm64',
+  'linux-x64': '@muthuishere/windowctl-linux-x64',
+  'win32-x64': '@muthuishere/windowctl-windows-x64',
+};
 
-if (!fs.existsSync(binPath)) {
-  console.error(`windowctl: native binary not found at ${binPath}.`);
-  console.error('The postinstall download likely failed. Try reinstalling:');
-  console.error('  npm install -g windowctl');
-  console.error('Or download a binary directly from');
-  console.error('  https://github.com/muthuishere/windowctl/releases');
+const key = `${process.platform}-${process.arch}`;
+const pkg = SUPPORTED[key];
+
+function fail(msg) {
+  process.stderr.write(`windowctl: ${msg}\n`);
   process.exit(1);
+}
+
+if (!pkg) {
+  fail(
+    `unsupported platform ${key}. Supported: ${Object.keys(SUPPORTED).join(', ')}. ` +
+      `See https://github.com/muthuishere/windowctl/releases for manual downloads.`,
+  );
+}
+
+const binName = process.platform === 'win32' ? 'windowctl.exe' : 'windowctl';
+
+let binPath;
+try {
+  binPath = require.resolve(`${pkg}/bin/${binName}`);
+} catch (_err) {
+  fail(
+    `platform package ${pkg} is not installed. This usually means npm was run with ` +
+      `--no-optional or your environment skipped optional deps. Reinstall with: ` +
+      `npm install -g @muthuishere/windowctl`,
+  );
 }
 
 const child = spawn(binPath, process.argv.slice(2), { stdio: 'inherit' });
@@ -26,7 +50,4 @@ child.on('exit', (code, signal) => {
   }
   process.exit(code ?? 1);
 });
-child.on('error', (err) => {
-  console.error('windowctl:', err.message);
-  process.exit(1);
-});
+child.on('error', (err) => fail(`failed to launch ${binPath}: ${err.message}`));

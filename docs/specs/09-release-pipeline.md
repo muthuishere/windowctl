@@ -2,14 +2,17 @@
 
 > Part of the [windowctl OpenSpec capability set](./README.md).
 
-- **Status:** Partial — pipeline is wired and CGO-disabled cross-compiles
-  succeed; the macOS CGO linker-flag requirement is staged in
-  `.goreleaser.yaml` as a documented toggle and activates when the
-  macOS adapter starts using CGO.
+- **Status:** Implemented — local-driven `task release -- <version>`
+  bumps versions, cross-compiles five targets via goreleaser, stages
+  binaries into `npm/platforms/<os-arch>/bin/`, publishes all 6 npm
+  packages, commits the bump, tags, pushes, and creates the matching
+  GitHub release. No GitHub Actions release path — everything runs
+  from the developer's Mac.
 - **Source:** §9.1, §9.2
-- **Summary:** Cross-compile, checksum, and publish GitHub releases for
-  macOS, Windows, and Linux on both `amd64` and `arm64`, orchestrated by
-  Taskfile and GoReleaser.
+- **Summary:** Cross-compile, checksum, and publish GitHub releases
+  AND npm packages for macOS, Windows, and Linux on both `amd64` and
+  `arm64` (windows-arm64 excluded), orchestrated locally by Taskfile,
+  goreleaser, and a small shell script.
 
 ## Requirement: Taskfile-driven build orchestration
 
@@ -17,38 +20,70 @@
 
 - **WHEN** a developer runs `task --list`
 - **THEN** the available tasks include `build`, `test`, `lint`,
-  `snapshot`, and `release` with the behavior described in §9.1
+  `snapshot`, `release:dry-run`, `npm:bump`, `npm:publish`, and
+  `release` with the behavior described in this spec
 
 ## Requirement: Cross-compiled binaries
 
 ### Scenario: GoReleaser produces all target binaries
 
-- **WHEN** `task release` (or `task snapshot`) runs
-- **THEN** GoReleaser produces binaries for `darwin`, `windows`, and
-  `linux` on both `amd64` and `arm64`
+- **WHEN** `task snapshot` (or `task release -- <version>` internally)
+  runs
+- **THEN** GoReleaser produces five binaries — `darwin/amd64`,
+  `darwin/arm64`, `linux/amd64`, `linux/arm64`, `windows/amd64` —
+  with the documented ldflags (`-s -w` + version/commit/date stamping)
+- **AND** each per-build post hook fires
+  `scripts/stage-npm-binary.sh "{{ .Target }}" "{{ .Path }}"`, which
+  copies the freshly-built binary into the matching
+  `npm/platforms/<os-arch>/bin/` directory
 
-## Requirement: macOS CGO linker flags *(Pending — activates with macOS adapter CGO)*
+### Scenario: windows-arm64 is intentionally skipped
 
-### Scenario: macOS build links the required frameworks
+- **WHEN** the goreleaser matrix expands
+- **THEN** the `windowctl-nondarwin` build's `ignore` rule excludes
+  `goos: windows, goarch: arm64` — niche platform, no demand yet,
+  matching the npm sub-package set (which also has no
+  `windows-arm64` package)
 
-- **WHEN** the macOS binary is built **and the macOS adapter uses CGO**
-- **THEN** CGO is enabled and the linker flags include
-  `-framework ApplicationServices` and `-framework CoreGraphics`
+## Requirement: macOS CGO link
 
-> The macOS adapter currently ships as a non-CGO scaffold (every method
-> returns `core.ErrNotImplemented`), so the release pipeline builds it
-> with `CGO_ENABLED=0` like the other platforms. `.goreleaser.yaml`
-> contains a commented-out CGO-enabled darwin build with the required
-> framework flags; flipping that block from a comment to a live build
-> entry is the work that moves this requirement to `Implemented`.
+### Scenario: macOS build uses CGO with the required frameworks
 
-## Requirement: Checksums and GitHub release
+- **WHEN** the macOS binary is built
+- **THEN** the `windowctl-darwin` build entry sets `CGO_ENABLED=1` and
+  the framework link line lives in
+  `internal/adapter/darwin/adapter.go`'s `#cgo LDFLAGS:` directive
+  (`-framework CoreGraphics -framework CoreFoundation -framework
+  ApplicationServices -framework AppKit`) — goreleaser does not need
+  to re-state framework flags
 
-### Scenario: SHA-256 checksums are published with the binaries
+## Requirement: Checksums
 
-- **WHEN** a release is published
-- **THEN** SHA-256 checksums are generated for every binary and the
-  binaries are attached to a GitHub release
+### Scenario: SHA-256 checksums are produced alongside the binaries
+
+- **WHEN** a release (or snapshot) is built
+- **THEN** SHA-256 checksums are generated for every archive and
+  recorded in `dist/checksums.txt`
+
+## Requirement: Local-only publish (no GitHub Actions)
+
+### Scenario: One-shot release
+
+- **WHEN** the developer runs `task release -- <version>` (which
+  invokes `scripts/release-local.sh <version>`)
+- **THEN** the script runs the full pipeline on the local machine:
+  preflight checks (`npm whoami`, `gh auth status`, clean working
+  tree, no existing tag) → `node scripts/bump-npm-version.js
+  <version>` → `goreleaser release --snapshot --clean --skip=publish`
+  (binaries land in `dist/` AND get staged into `npm/platforms/...`
+  via the post-build hook) → `bash scripts/publish-npm-local.sh`
+  (publish 5 sub-packages, then main) → commit the version bump
+  → `git tag v<version>` → `git push origin main` →
+  `git push origin v<version>` → `gh release create v<version>`
+  with the tarballs, zips, and checksums
+- **AND** no GitHub Actions secrets, no `NPM_TOKEN` in CI, no Actions
+  workflow involvement — auth is whatever `npm whoami` and
+  `gh auth status` already trust on the developer's Mac
 
 ## Tasks
 
@@ -56,9 +91,9 @@
 |------|---------|
 | `task build` | Builds the CLI binary for the current platform |
 | `task test` | Runs all tests prior to release |
-| `task lint` | Runs the linter prior to release |
-| `task snapshot` | Builds a snapshot release for all platforms |
-| `task release` | Publishes a GitHub release via GoReleaser |
-
-> This spec **is** the Taskfile contract — every entry above is one of
-> the required tasks listed in §9.1.
+| `task lint` | Runs `go vet` prior to release |
+| `task snapshot` | `goreleaser --snapshot --skip=publish` — five binaries staged into `npm/platforms/...` |
+| `task release:dry-run` | Same as snapshot, with `--verbose` for debugging the goreleaser config |
+| `task npm:bump -- <ver>` | Sync all 6 `package.json` versions |
+| `task npm:publish` | Publish all 6 packages non-interactively (binaries must already be staged) |
+| `task release -- <ver>` | Full one-shot local release |

@@ -2,70 +2,115 @@
 
 > Part of the [windowctl OpenSpec capability set](./README.md).
 
-- **Status:** Partial — strategy resolved, package skeleton shipped;
-  blocked from `Implemented` until at least one matching GitHub release
-  has been published so the postinstall download has something to fetch.
+- **Status:** Implemented — `@muthuishere/windowctl` ships as a wrapper
+  package whose `optionalDependencies` resolve to the matching platform
+  sub-package (`@muthuishere/windowctl-<os>-<arch>`); npm itself selects
+  the right one at install time. No postinstall, no network call at
+  install time, no GitHub Releases dependency.
 - **Source:** §9.3, OI-05
 - **Summary:** Make the CLI installable and runnable via npm so that
-  `npx windowctl <command>` and `npm install -g windowctl` both work.
+  `npx @muthuishere/windowctl <command>` and
+  `npm install -g @muthuishere/windowctl` both work, with the right
+  prebuilt binary for the host shipped inside an npm sub-package.
 
 ## Strategy decision (resolves OI-05)
 
-The package downloads the matching native binary on `postinstall` rather
-than bundling every platform's binary. The npm tarball stays small (one
-JS wrapper plus a download script), and the binaries are sourced from
-the GitHub release that matches `package.json#version`. The download
-extracts a `tar.gz` into `npm/native/`, where the wrapper looks for it.
+Multi-package `optionalDependencies` pattern. The main package
+`@muthuishere/windowctl` ships only the JS launcher
+(`npm/bin/windowctl.js`) and declares five platform sub-packages as
+`optionalDependencies`:
 
-## Requirement: `npx windowctl` runs the native binary
+```json
+"optionalDependencies": {
+  "@muthuishere/windowctl-darwin-arm64": "<version>",
+  "@muthuishere/windowctl-darwin-x64":   "<version>",
+  "@muthuishere/windowctl-linux-arm64":  "<version>",
+  "@muthuishere/windowctl-linux-x64":    "<version>",
+  "@muthuishere/windowctl-windows-x64":  "<version>"
+}
+```
+
+Each sub-package has its own `package.json` with `"os"` and `"cpu"`
+fields constraining install to the matching host. npm only fetches the
+sub-package whose OS+CPU match the installer; the others are silently
+skipped.
+
+The launcher (`require.resolve(`${pkg}/bin/${binName}`)`) finds the
+native binary inside the installed sub-package and execs it. No
+`postinstall`, no tar download, no GitHub Releases dependency at
+install time.
+
+Windows arm64 is excluded for now (matches the goreleaser `ignore`
+rule) — niche platform; revisit when there's demand.
+
+## Requirement: `npx @muthuishere/windowctl` runs the native binary
 
 ### Scenario: First-run via npx
 
-- **WHEN** a user runs `npx windowctl windows list`
-- **THEN** the npm package's JS wrapper (`npm/bin/windowctl.js`)
-  resolves the binary at `npm/native/windowctl` (or `windowctl.exe` on
-  Windows) and exec's it, forwarding `argv`, stdio, and the exit code
+- **WHEN** a user runs `npx @muthuishere/windowctl windows list`
+- **THEN** the launcher (`npm/bin/windowctl.js`) maps
+  `${process.platform}-${process.arch}` to the matching sub-package
+  name (e.g. `darwin-arm64` → `@muthuishere/windowctl-darwin-arm64`),
+  resolves the binary inside it via `require.resolve`, and exec's it,
+  forwarding `argv`, stdio, and the exit code
 
-### Scenario: Binary missing because postinstall failed
+### Scenario: Unsupported host platform
 
-- **WHEN** the wrapper is invoked but the binary is not present
-- **THEN** it prints a diagnostic pointing at
-  <https://github.com/muthuishere/windowctl/releases> and exits non-zero,
-  so the failure is visible rather than silently exec'ing nothing
+- **WHEN** `process.platform` / `process.arch` does not appear in the
+  launcher's `SUPPORTED` map (e.g. windows-arm64, freebsd, openbsd)
+- **THEN** the launcher prints the unsupported key, lists the supported
+  keys, points at the GitHub Releases page for manual downloads, and
+  exits non-zero
+
+### Scenario: Platform sub-package was skipped
+
+- **WHEN** the launcher runs but `require.resolve` for the matching
+  sub-package fails (e.g. `npm install --no-optional`, or the optional
+  dep was filtered out by an enterprise registry)
+- **THEN** it prints a diagnostic explaining the cause and the fix
+  (`npm install -g @muthuishere/windowctl`), and exits non-zero
 
 ## Requirement: Global install
 
-### Scenario: `npm install -g windowctl` exposes the CLI on PATH
+### Scenario: `npm install -g @muthuishere/windowctl` exposes the CLI on PATH
 
-- **WHEN** a user runs `npm install -g windowctl`
-- **THEN** the `bin` field in `npm/package.json` causes a `windowctl`
-  shim to be placed on the system PATH that delegates to the JS wrapper
+- **WHEN** a user runs `npm install -g @muthuishere/windowctl`
+- **THEN** the `bin` field in the main `package.json` causes a
+  `windowctl` shim to be placed on the system PATH that delegates to
+  the JS launcher
 
-## Requirement: Postinstall binary acquisition
+## Requirement: Version sync across all 6 packages
 
-### Scenario: Postinstall downloads the right binary for the host
+### Scenario: Bumping the version
 
-- **WHEN** `npm install` runs the package's `postinstall` step
-- **THEN** `npm/scripts/install.js` maps `process.platform` /
-  `process.arch` to the GoReleaser asset name
-  (`windowctl_<version>_<os>_<arch>.tar.gz`), downloads it from
-  `https://github.com/muthuishere/windowctl/releases/download/v<version>/<asset>`,
-  and extracts it into `npm/native/`
+- **WHEN** the developer runs
+  `node scripts/bump-npm-version.js <version>` (or
+  `task npm:bump -- <version>`)
+- **THEN** the same `<version>` is written into all 6 `package.json`
+  files (main + 5 sub-packages) and into the main package's
+  `optionalDependencies` pins, so npm's resolution stays consistent
 
-### Scenario: Release for this version does not yet exist
+## Requirement: Local-only publish flow
 
-- **WHEN** the GitHub release for `v<package.json#version>` is missing
-- **THEN** the download script fails with `HTTP 404` and the user sees
-  a message pointing them at the releases page; npm install exits
-  non-zero so the gap is loud rather than silent
+### Scenario: Publishing to npm without GitHub Actions
+
+- **WHEN** the developer runs `task release -- <version>` (which
+  invokes `scripts/release-local.sh`)
+- **THEN** the pipeline runs entirely on the local machine: bumps
+  versions, runs `goreleaser release --snapshot --clean --skip=publish`
+  to cross-compile and stage binaries into
+  `npm/platforms/<os-arch>/bin/`, then `npm publish --access public`
+  for each of the 6 packages (sub-packages first, main last), then
+  commits the version bump, tags `v<version>`, pushes, and creates the
+  matching GitHub release with the snapshot tarballs and checksums
+- **AND** no `NPM_TOKEN` is required in CI; auth is whatever
+  `npm whoami` already trusts on the developer's machine
 
 ## Tasks
 
 | Task | Purpose |
 |------|---------|
-| `task snapshot` | Produces the per-platform binaries that the npm postinstall downloads |
-| `task release` | Publishes the GitHub release whose URL `npm/scripts/install.js` fetches |
-
-> The npm package itself does not have a `task` target yet — it is
-> built and tested with `npm install` / `npm publish` directly. Adding
-> a wrapper task once a real publishing flow exists is a small follow-up.
+| `task snapshot` | `goreleaser release --snapshot --clean --skip=publish` — staging-only; populates `npm/platforms/<os-arch>/bin/` |
+| `task npm:bump -- <version>` | Sync all 6 `package.json` versions to `<version>` |
+| `task npm:publish` | Publish all 6 packages non-interactively (assumes binaries already staged) |
+| `task release -- <version>` | Full one-shot release: bump → build → publish → commit → tag → push → GH release |

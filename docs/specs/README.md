@@ -25,8 +25,8 @@ higher-level capability is built. Everything else builds on it.
 | 5 | [`window-move-coords`](./05-window-move-coords.md) | Implemented | FR-MOV-02, FR-MOV-04, §4.3.3, §11 |
 | 6 | [`window-focus`](./06-window-focus.md) | Implemented | FR-FOC-01, §11 |
 | 7 | [`go-library-api`](./07-go-library-api.md) | Implemented | LIB-01, LIB-02, LIB-03, §8.3 |
-| 8 | [`npm-distribution`](./08-npm-distribution.md) | Partial | §9.3, OI-05 |
-| 9 | [`release-pipeline`](./09-release-pipeline.md) | Partial | §9.1, §9.2 |
+| 8 | [`npm-distribution`](./08-npm-distribution.md) | Implemented | §9.3, OI-05 |
+| 9 | [`release-pipeline`](./09-release-pipeline.md) | Implemented | §9.1, §9.2 |
 | 10 | [`ci-test-matrix`](./10-ci-test-matrix.md) | Partial | §10.1, §10.2, §10.3, §10.4 |
 | 11 | [`permissions-subcommand`](./11-permissions-subcommand.md) | Implemented | §7.2, §11 |
 

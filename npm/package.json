@@ -1,40 +1,51 @@
 {
-  "name": "windowctl",
-  "version": "0.1.0",
-  "description": "Cross-platform CLI for managing desktop windows and monitors",
+  "name": "@muthuishere/windowctl",
+  "version": "0.2.0",
+  "description": "Cross-platform CLI for managing desktop windows and monitors (macOS, Linux, Windows).",
+  "keywords": [
+    "windowctl",
+    "window-manager",
+    "tiling",
+    "macos",
+    "linux",
+    "windows",
+    "cli",
+    "automation"
+  ],
   "homepage": "https://github.com/muthuishere/windowctl",
   "bugs": {
     "url": "https://github.com/muthuishere/windowctl/issues"
   },
   "license": "MIT",
+  "author": "Muthukumaran Navaneethakrishnan",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/muthuishere/windowctl.git"
+    "url": "https://github.com/muthuishere/windowctl.git"
   },
   "bin": {
-    "windowctl": "bin/windowctl.js"
-  },
-  "scripts": {
-    "postinstall": "node scripts/install.js"
+    "windowctl": "./bin/windowctl.js"
   },
   "files": [
     "bin/",
-    "scripts/",
     "README.md"
   ],
-  "engines": {
-    "node": ">=18"
+  "optionalDependencies": {
+    "@muthuishere/windowctl-darwin-arm64": "0.2.0",
+    "@muthuishere/windowctl-darwin-x64": "0.2.0",
+    "@muthuishere/windowctl-linux-arm64": "0.2.0",
+    "@muthuishere/windowctl-linux-x64": "0.2.0",
+    "@muthuishere/windowctl-windows-x64": "0.2.0"
   },
   "os": [
-    "linux",
     "darwin",
+    "linux",
     "win32"
   ],
   "cpu": [
-    "x64",
-    "arm64"
+    "arm64",
+    "x64"
   ],
-  "dependencies": {
-    "tar": "^7.4.0"
+  "engines": {
+    "node": ">=18"
   }
 }

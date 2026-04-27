@@ -13,11 +13,14 @@ Authoritative specs live in `docs/requirements.md` and `docs/specs/` (OpenSpec-s
 Uses [Taskfile](https://taskfile.dev):
 
 ```sh
-task build      # go build -o bin/windowctl ./cmd/windowctl
-task test       # go test ./...
-task lint       # go vet ./...
-task snapshot   # goreleaser release --snapshot --clean
-task release    # goreleaser release --clean
+task build              # go build -o bin/windowctl ./cmd/windowctl
+task test               # go test ./...
+task lint               # go vet ./...
+task snapshot           # goreleaser release --snapshot --skip=publish; stages binaries into npm/platforms/<os-arch>/bin/
+task release:dry-run    # same as snapshot, with --verbose for goreleaser config debugging
+task npm:bump -- 0.2.0  # sync version across main + 5 platform sub-packages
+task npm:publish        # npm publish all 6 packages non-interactively (binaries must already be staged)
+task release -- 0.2.0   # full local release: bump → snapshot+stage → publish 6 packages → commit → tag → push → GH release
 ```
 
 Single test: `go test ./... -run TestApplyFilterByTitleIsPartialAndCaseInsensitive`. Tests are in the repo root package (`windowctl`) and `cmd/windowctl`; the per-OS adapter packages have no unit tests — they're validated via the smoke scripts in CI.
@@ -48,9 +51,11 @@ The adapter interface is intentionally tiny (`ListWindows`, `ListMonitors`, `Mov
 
 ### Build & release
 
-`.goreleaser.yaml` has two build entries: `windowctl-nondarwin` (linux/windows, `CGO_ENABLED=0`) and `windowctl-darwin` (`CGO_ENABLED=1`). Cross-compiling to darwin from a non-darwin host requires a darwin C toolchain (osxcross); on macOS the system clang handles it.
+`.goreleaser.yaml` has two build entries: `windowctl-nondarwin` (linux/windows, `CGO_ENABLED=0`, ignores `windows/arm64`) and `windowctl-darwin` (`CGO_ENABLED=1`). Cross-compiling to darwin from a non-darwin host requires a darwin C toolchain (osxcross); on macOS the system clang handles it. Each build entry has a per-build post hook (`scripts/stage-npm-binary.sh`) that copies the freshly-built binary into the matching `npm/platforms/<os>-<arch>/bin/` directory.
 
-The npm package (`npm/`) is a thin wrapper: `postinstall` (`npm/scripts/install.js`) downloads the matching `windowctl_<version>_<os>_<arch>.tar.gz` from the GitHub release for the current `package.json` version. Bumping the npm version requires a matching GitHub release to exist.
+The npm distribution uses the multi-package `optionalDependencies` pattern: `@muthuishere/windowctl` is a thin JS launcher (`npm/bin/windowctl.js`) that `require.resolve`s the matching `@muthuishere/windowctl-<os>-<arch>` sub-package and execs the native binary. No postinstall, no GitHub Releases dependency at install time. Five sub-packages: darwin-{arm64,x64}, linux-{arm64,x64}, windows-x64. Each has `os`+`cpu` fields so npm only installs the matching one.
+
+Local release flow (no GitHub Actions involved): `task release -- <version>` runs the full pipeline — `node scripts/bump-npm-version.js` syncs versions across all 6 `package.json` files, `goreleaser release --snapshot --clean --skip=publish` cross-compiles + stages binaries via the post hooks, `scripts/publish-npm-local.sh` publishes all 6 packages non-interactively (`npm publish --access public` per package; assumes the configured token bypasses 2FA), then commit + tag + push + `gh release create`. See `docs/specs/09-release-pipeline.md`.
 
 ## Conventions
 

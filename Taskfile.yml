@@ -17,14 +17,14 @@ tasks:
       - go vet ./...
 
   snapshot:
-    desc: Build a snapshot release for all platforms (requires goreleaser)
+    desc: Build a snapshot release for all platforms locally (no publish, no tag). Stages binaries into npm/platforms/<os-arch>/bin/ via the per-build post hook.
     cmds:
-      - goreleaser release --snapshot --clean
+      - goreleaser release --snapshot --clean --skip=publish
 
-  release:
-    desc: Publish a release via GoReleaser
+  release:dry-run:
+    desc: Verbose snapshot release for debugging the goreleaser config.
     cmds:
-      - goreleaser release --clean
+      - goreleaser release --snapshot --clean --skip=publish --verbose
 
   smoke-darwin:
     desc: Run the macOS real-window smoke test (TextEdit via LaunchServices, no AppleScript)
@@ -35,3 +35,18 @@ tasks:
     desc: Run the Windows real-window smoke test (Notepad)
     cmds:
       - pwsh ./scripts/smoke-windows.ps1
+
+  npm:bump:
+    desc: "Sync npm package versions across main + 5 platform sub-packages. Usage: task npm:bump -- 0.2.0"
+    cmds:
+      - node scripts/bump-npm-version.js {{.CLI_ARGS}}
+
+  npm:publish:
+    desc: "Publish all 6 @muthuishere/windowctl* packages to npm (sub-packages first, then main). Non-interactive — token must be configured."
+    cmds:
+      - bash scripts/publish-npm-local.sh
+
+  release:
+    desc: "Full local release: bump → goreleaser snapshot → publish 6 npm packages → commit → tag → push → GH release. Usage: task release -- 0.2.0"
+    cmds:
+      - bash scripts/release-local.sh {{.CLI_ARGS}}

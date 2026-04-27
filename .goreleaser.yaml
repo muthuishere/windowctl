@@ -12,27 +12,39 @@ builds:
     binary: windowctl
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
     goos:
       - linux
       - windows
     goarch:
       - amd64
       - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}
       - -X main.commit={{ .Commit }}
       - -X main.date={{ .Date }}
+    hooks:
+      post:
+        - cmd: scripts/stage-npm-binary.sh "{{ .Target }}" "{{ .Path }}"
 
-  # darwin needs CGO because internal/adapter/darwin links CoreGraphics
-  # and CoreFoundation. Cross-compiling to darwin from a non-darwin host
-  # therefore requires a darwin C toolchain (osxcross etc.); on a real
+  # darwin needs CGO because internal/adapter/darwin links CoreGraphics,
+  # CoreFoundation, ApplicationServices, and AppKit (Move/Focus go through
+  # the Accessibility API; required framework flags live in the adapter's
+  # `#cgo LDFLAGS:` directive). Cross-compiling darwin from a non-darwin
+  # host therefore requires a darwin C toolchain (osxcross etc.); on a
   # macOS host the system clang handles it transparently.
   - id: windowctl-darwin
     main: ./cmd/windowctl
     binary: windowctl
     env:
       - CGO_ENABLED=1
+    flags:
+      - -trimpath
     goos:
       - darwin
     goarch:
@@ -43,22 +55,24 @@ builds:
       - -X main.version={{ .Version }}
       - -X main.commit={{ .Commit }}
       - -X main.date={{ .Date }}
-
-# When the macOS adapter wires the Accessibility API for Move/Focus, add
-# `-framework ApplicationServices` to the darwin ldflags above (the
-# CoreGraphics framework already covers the current ListWindows /
-# ListMonitors path).
+    hooks:
+      post:
+        - cmd: scripts/stage-npm-binary.sh "{{ .Target }}" "{{ .Path }}"
 
 archives:
   - id: default
-    formats:
-      - tar.gz
-    name_template: >-
-      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
 
 checksum:
   name_template: checksums.txt
   algorithm: sha256
+
+snapshot:
+  version_template: "{{ .Version }}-snapshot"
 
 release:
   github:
@@ -66,9 +80,6 @@ release:
     name: windowctl
   draft: false
   prerelease: auto
-
-snapshot:
-  version_template: "{{ .Version }}-next"
 
 changelog:
   sort: asc
