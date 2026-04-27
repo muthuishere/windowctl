@@ -38,28 +38,41 @@
 
 ## Requirement: macOS integration smoke test *(Implemented)*
 
-### Scenario: Real-window smoke test on macOS runner (default — AX not granted)
+### Scenario: Real-window smoke test on macOS runner (auto-detect)
 
-- **WHEN** the workflow runs on `macos-latest` without
-  Accessibility permission granted to the runner process
+- **WHEN** the workflow runs on `macos-latest` (or the script runs
+  on a developer's local Mac)
 - **THEN** the step builds the CLI, launches TextEdit via
-  LaunchServices (`open -a TextEdit`), detects it via
-  `windowctl windows list --json`, runs `windowctl move`, and asserts
-  that `move` exits non-zero with `core.ErrAccessibilityDenied` —
-  matching the macOS adapter contract in
-  [`01-os-spikes.md`](./01-os-spikes.md)
+  LaunchServices (`open -a TextEdit`), polls
+  `windowctl windows list --json` until TextEdit is detected (10s
+  budget, fail loud on timeout), runs `windowctl move`, and
+  branches on the actual outcome:
+  - move exit 0 → assert TextEdit's post-move bounds match the
+    requested rectangle within `WCTL_AX_TOLERANCE` pixels (default
+    50, to absorb the macOS title-bar / shadow / chrome-vs-content
+    geometry skew)
+  - move exit non-zero AND stderr contains "Accessibility permission
+    denied" → assert that's the case and pass (matches the macOS
+    adapter contract in [`01-os-spikes.md`](./01-os-spikes.md))
+  - any other outcome → fail
 - **AND** the step is wired in `.github/workflows/ci.yaml` as
   `task smoke-darwin` (gated on `matrix.os == 'macos-latest'`),
   with the Task runner installed via `arduino/setup-task@v2`
+- **WHY auto-detect:** both `macos-latest` runners and developers'
+  local Macs typically inherit Accessibility trust from the parent
+  shell process, so a "fresh, AX-denied" runner is the exception
+  rather than the default — asserting either path upfront is brittle
 
-### Scenario: Real-window smoke test on macOS runner (opt-in — AX granted)
+### Scenario: Real-window smoke test on macOS runner (strict — AX granted)
 
-- **WHEN** the same script runs locally with `WCTL_SMOKE_AX=1` after
-  the developer has granted Accessibility access in System Settings
-- **THEN** `windowctl move` is asserted to exit 0 AND a follow-up
-  `windows list` reports TextEdit's bounds matching the requested
-  rectangle within `WCTL_AX_TOLERANCE` pixels (default 10, to absorb
-  the CG/AX title-bar and shadow geometry skew)
+- **WHEN** the script runs locally with `WCTL_SMOKE_AX=1` after the
+  developer has confirmed Accessibility access is granted to the
+  invoking shell
+- **THEN** the script REQUIRES the granted path: move must exit 0
+  AND bounds must land within `WCTL_AX_TOLERANCE` pixels of the
+  request. If move returns `ErrAccessibilityDenied` despite the
+  flag, the script fails loudly (catches a regression where TCC
+  trust silently breaks on a previously-trusted setup)
 
 ## Requirement: Testing constraints
 

@@ -24,7 +24,7 @@ Single test: `go test ./... -run TestApplyFilterByTitleIsPartialAndCaseInsensiti
 
 Real-window smoke tests (run automatically by `.github/workflows/ci.yaml` via `task smoke-darwin` / `task smoke-windows` on the matching runner; the workflow installs `task` via `arduino/setup-task@v2`):
 
-- `task smoke-darwin` — builds CLI, launches TextEdit via LaunchServices (`open -a`), polls `windowctl windows list` until detected (10s budget), then asserts the AX-denied error path by default. Set `WCTL_SMOKE_AX=1` (after granting AX in System Settings → Privacy & Security → Accessibility) to assert the success path instead — bounds within `WCTL_AX_TOLERANCE` (default 10px).
+- `task smoke-darwin` — builds CLI, launches TextEdit via LaunchServices (`open -a`), polls `windowctl windows list` until detected (10s budget), then runs `windowctl move` and auto-detects the AX state from the actual outcome — exit 0 means trust is inherited (asserts bounds within `WCTL_AX_TOLERANCE`, default 50px to absorb title-bar/chrome variance), exit !=0 with "Accessibility permission denied" means a fresh runner (asserts the denied error). `WCTL_SMOKE_AX=1` is an opt-in strict mode that REQUIRES the granted path, useful for catching TCC regressions on a known-good local setup.
 - `task smoke-windows` — builds CLI, launches Notepad, verifies `windows list` detects it and `move` succeeds.
 
 Module is Go 1.24, single dep `golang.org/x/sys`.
