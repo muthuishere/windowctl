@@ -267,6 +267,16 @@ Set `WCTL_AX_DEBUG=1` to dump the macOS Accessibility window-resolution walk to 
 WCTL_AX_DEBUG=1 windowctl move --app "Google Chrome" --x 100 --y 100 --w 800 --h 600
 ```
 
+## Natural-language wrapper
+
+If you want to drive `windowctl` from an agent in plain English (*"split chrome left, slack right"*, *"send vscode to my external"*, *"save this layout as work-mode"*) instead of writing flag combinations, there is a companion agent skill:
+
+```sh
+npx skills add muthuishere-agent-skills/window-control
+```
+
+Repo: [github.com/muthuishere-agent-skills/window-control](https://github.com/muthuishere-agent-skills/window-control). It's the routing + recipe layer; the actual window operations still go through this CLI.
+
 ## License
 
 MIT
