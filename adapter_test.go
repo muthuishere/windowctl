@@ -335,6 +335,144 @@ func TestCheckAccessibilitySurfacesDenied(t *testing.T) {
 	}
 }
 
+// intPtr is a tiny helper for the Batch tests that need to populate
+// the *int pointer fields on BatchEntry.
+func intPtr(n int) *int { return &n }
+
+// TestBatchAppliesAllEntriesEvenWhenSomeFail covers the core contract:
+// one entry's failure must NOT prevent the next entry from being
+// applied. Three entries — coord-mode hit, no-match miss, zone-mode
+// hit — and we assert all three results in order, the matching ones
+// recorded on the adapter, and the no-match one carrying ErrNoMatch.
+func TestBatchAppliesAllEntriesEvenWhenSomeFail(t *testing.T) {
+	a := &mockAdapter{
+		windows: sampleWindows(),
+		monitors: []Monitor{
+			{ID: 1, X: 0, Y: 0, Width: 1920, Height: 1080, Primary: true},
+		},
+	}
+	entries := []BatchEntry{
+		// 1. Coord-mode hit on Chrome.
+		{Title: "chrome", X: intPtr(10), Y: intPtr(20), W: intPtr(100), H: intPtr(200)},
+		// 2. Filter that matches nothing — must produce ErrNoMatch
+		//    without aborting the loop.
+		{App: "Nothing", X: intPtr(0), Y: intPtr(0), W: intPtr(50), H: intPtr(50)},
+		// 3. Zone-mode hit on Slack.
+		{App: "Slack", Zone: "1A"},
+	}
+	results := batchWith(a, entries)
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	if results[0].Err != nil {
+		t.Errorf("entry 0 (chrome coord move): expected nil err, got %v", results[0].Err)
+	}
+	if !errors.Is(results[1].Err, ErrNoMatch) {
+		t.Errorf("entry 1 (no-match): expected ErrNoMatch, got %v", results[1].Err)
+	}
+	if results[2].Err != nil {
+		t.Errorf("entry 2 (slack zone move): expected nil err, got %v", results[2].Err)
+	}
+	if got := a.moved["1"]; got != (Rect{X: 10, Y: 20, W: 100, H: 200}) {
+		t.Errorf("chrome (id=1) move bounds: got %+v want {10 20 100 200}", got)
+	}
+	if _, ok := a.moved["3"]; !ok {
+		t.Errorf("slack (id=3) should have been moved by entry 2; moved=%+v", a.moved)
+	}
+	// Confirm the no-match entry did NOT record a move on any window.
+	if len(a.moved) != 2 {
+		t.Errorf("expected exactly 2 windows moved (chrome, slack), got %d: %+v", len(a.moved), a.moved)
+	}
+}
+
+// TestBatchPerEntryValidationContinues feeds entries that fail the
+// per-entry validation rules and asserts each fails with a descriptive
+// error AND that subsequent entries still run.
+func TestBatchPerEntryValidationContinues(t *testing.T) {
+	a := &mockAdapter{
+		windows: sampleWindows(),
+		monitors: []Monitor{
+			{ID: 1, X: 0, Y: 0, Width: 1920, Height: 1080, Primary: true},
+		},
+	}
+	entries := []BatchEntry{
+		// 0. Missing match (no title, no app).
+		{Zone: "1A"},
+		// 1. Missing target (no zone, no coords).
+		{App: "Slack"},
+		// 2. Partial coords — only X / Y, no W / H.
+		{App: "Slack", X: intPtr(0), Y: intPtr(0)},
+		// 3. Zone + coords together.
+		{App: "Slack", Zone: "1A", X: intPtr(0), Y: intPtr(0), W: intPtr(100), H: intPtr(100)},
+		// 4. W / H not > 0.
+		{App: "Slack", X: intPtr(0), Y: intPtr(0), W: intPtr(0), H: intPtr(100)},
+		// 5. Monitor < 1.
+		{App: "Slack", Monitor: intPtr(0), Zone: "1A"},
+		// 6. Valid entry — must still run after all the failures above.
+		{App: "Slack", Zone: "1A"},
+	}
+	results := batchWith(a, entries)
+	if len(results) != len(entries) {
+		t.Fatalf("expected %d results, got %d", len(entries), len(results))
+	}
+	wantSubstr := []string{
+		"title or app is required",
+		"either zone or x/y/w/h is required",
+		"x, y, w and h must all be set",
+		"mutually exclusive",
+		"w and h must be > 0",
+		"monitor must be >= 1",
+	}
+	for i, want := range wantSubstr {
+		if results[i].Err == nil {
+			t.Errorf("entry %d: expected validation error containing %q, got nil", i, want)
+			continue
+		}
+		if !strings.Contains(results[i].Err.Error(), want) {
+			t.Errorf("entry %d: expected error containing %q, got %q", i, want, results[i].Err.Error())
+		}
+	}
+	if results[6].Err != nil {
+		t.Errorf("entry 6 (valid, after all failures): expected nil, got %v", results[6].Err)
+	}
+	if _, ok := a.moved["3"]; !ok {
+		t.Errorf("entry 6 should have moved slack (id=3); moved=%+v", a.moved)
+	}
+	// None of the validation-failing entries should have produced a move.
+	if len(a.moved) != 1 {
+		t.Errorf("expected exactly 1 window moved (the final valid entry), got %d: %+v", len(a.moved), a.moved)
+	}
+}
+
+// TestBatchZoneEntryUsesGivenMonitor pins that an explicit Monitor on
+// a zone entry routes through findMonitor (not auto-resolve) and that
+// the resulting move bounds reflect the chosen monitor's geometry.
+// Zone "1A" is the LEFT HALF of the chosen monitor — picking monitor
+// 2 (origin at X=1920) must therefore produce a rect anchored at
+// X=1920, not at X=0. That's the load-bearing assertion: the right
+// monitor's origin is honored.
+func TestBatchZoneEntryUsesGivenMonitor(t *testing.T) {
+	a := &mockAdapter{
+		windows: sampleWindows(),
+		monitors: []Monitor{
+			{ID: 1, X: 0, Y: 0, Width: 1920, Height: 1080, Primary: true},
+			{ID: 2, X: 1920, Y: 0, Width: 2560, Height: 1440},
+		},
+	}
+	entries := []BatchEntry{
+		{App: "Slack", Monitor: intPtr(2), Zone: "1A"},
+	}
+	results := batchWith(a, entries)
+	if results[0].Err != nil {
+		t.Fatalf("zone-on-monitor-2 entry: expected nil err, got %v", results[0].Err)
+	}
+	// 1A on monitor 2 = left half, anchored at monitor 2's origin.
+	want := Rect{X: 1920, Y: 0, W: 1280, H: 1440}
+	if got := a.moved["3"]; got != want {
+		t.Fatalf("expected slack moved to monitor 2's left half %+v, got %+v", want, got)
+	}
+}
+
 // TestCheckAccessibilityDoesNotErrOnSignature is a compile-time pin: by
 // returning bool (not (bool, error)), CheckAccessibility states that the
 // underlying AXIsProcessTrustedWithOptions(prompt=false) call has no

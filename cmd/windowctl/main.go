@@ -32,6 +32,8 @@ func main() {
 		resizeCmd(os.Args[2:])
 	case "permissions":
 		permissionsCmd(os.Args[2:])
+	case "batch":
+		batchCmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 	default:
@@ -50,7 +52,8 @@ Usage:
   windowctl move (--title <s> | --app <s>) [--monitor <n>] (--zone <z> | --x <n> --y <n> --w <n> --h <n>)
   windowctl focus (--title <s> | --app <s>)
   windowctl resize (--title <s> | --app <s>) --w <n> --h <n>
-  windowctl permissions [--status] [--json]`)
+  windowctl permissions [--status] [--json]
+  windowctl batch [--file <path>] [--json]   (reads JSON array of entries from stdin or --file)`)
 }
 
 func windowsCmd(args []string) {
@@ -414,4 +417,108 @@ func runPermissions(stdout, stderr io.Writer, goos string, status, asJSON bool, 
 	}
 	fmt.Fprintln(stderr, "windowctl permissions:", err)
 	return 1
+}
+
+// batchCmd is the `windowctl batch` entry point. It reads a JSON array
+// of BatchEntry objects from stdin (or --file), applies each entry as
+// a Move sequentially, and never aborts on a single failure. Per-entry
+// success / failure is reported one line at a time (or as a JSON array
+// with --json). Exit code: 0 if every entry succeeded, 1 if any entry
+// failed, 2 if the input itself was invalid (parse error, file not
+// found, etc.).
+//
+// Sample input:
+//
+//	[
+//	  {"app": "Ghostty", "monitor": 2, "x": 0, "y": 25, "w": 1920, "h": 1055},
+//	  {"app": "Activity Monitor", "monitor": 1, "zone": "2A"},
+//	  {"title": "Inbox", "x": 100, "y": 100, "w": 800, "h": 600}
+//	]
+func batchCmd(args []string) {
+	fs := flag.NewFlagSet("batch", flag.ExitOnError)
+	file := fs.String("file", "", "read JSON entries from this path instead of stdin")
+	asJSON := fs.Bool("json", false, "emit JSON instead of text")
+	_ = fs.Parse(args)
+
+	rc := runBatch(os.Stdin, os.Stdout, os.Stderr, *file, *asJSON, windowctl.Batch)
+	if rc != 0 {
+		os.Exit(rc)
+	}
+}
+
+// runBatch encapsulates batchCmd's IO and dispatch so it can be unit-
+// tested without spawning the binary or touching the real adapter.
+// applyFn matches windowctl.Batch's signature so tests can inject a
+// stub.
+func runBatch(stdin io.Reader, stdout, stderr io.Writer, file string, asJSON bool, applyFn func([]windowctl.BatchEntry) []windowctl.BatchResult) int {
+	src := stdin
+	if file != "" {
+		f, err := os.Open(file)
+		if err != nil {
+			fmt.Fprintln(stderr, "windowctl batch:", err)
+			return 2
+		}
+		defer f.Close()
+		src = f
+	}
+
+	data, err := io.ReadAll(src)
+	if err != nil {
+		fmt.Fprintln(stderr, "windowctl batch: reading input:", err)
+		return 2
+	}
+
+	var entries []windowctl.BatchEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		fmt.Fprintln(stderr, "windowctl batch: parsing JSON:", err)
+		return 2
+	}
+
+	results := applyFn(entries)
+
+	failed := false
+	if asJSON {
+		out := make([]map[string]any, 0, len(results))
+		for _, r := range results {
+			rec := map[string]any{"entry": r.Entry}
+			if r.Err != nil {
+				rec["error"] = r.Err.Error()
+				failed = true
+			} else {
+				rec["ok"] = true
+			}
+			out = append(out, rec)
+		}
+		_ = json.NewEncoder(stdout).Encode(out)
+	} else {
+		for i, r := range results {
+			label := batchEntryLabel(r.Entry)
+			if r.Err != nil {
+				fmt.Fprintf(stderr, "[%d] %s: %s\n", i+1, label, r.Err)
+				failed = true
+			} else {
+				fmt.Fprintf(stdout, "[%d] %s: ok\n", i+1, label)
+			}
+		}
+	}
+
+	if failed {
+		return 1
+	}
+	return 0
+}
+
+// batchEntryLabel picks the most informative one-token identifier for
+// an entry: app first (typical case), then title, then "-" when the
+// entry was so under-specified that neither was set (validation will
+// have rejected it, but we still need something to print).
+func batchEntryLabel(e windowctl.BatchEntry) string {
+	switch {
+	case e.App != "":
+		return e.App
+	case e.Title != "":
+		return e.Title
+	default:
+		return "-"
+	}
 }

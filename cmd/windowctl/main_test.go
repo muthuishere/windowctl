@@ -465,6 +465,100 @@ func TestRunPermissionsStatusJSONLinux(t *testing.T) {
 	}
 }
 
+// TestRunBatchTextOutputMixedSuccessFailure pins the per-line text
+// output: success goes to stdout as "[N] <label>: ok", failure goes to
+// stderr as "[N] <label>: <err>", and the exit code is 1 when any
+// entry failed (even though others succeeded).
+func TestRunBatchTextOutputMixedSuccessFailure(t *testing.T) {
+	stdin := strings.NewReader(`[
+		{"app":"Ghostty","x":0,"y":0,"w":100,"h":100},
+		{"app":"Missing","zone":"1A"}
+	]`)
+	var stdout, stderr bytes.Buffer
+	apply := func(entries []windowctl.BatchEntry) []windowctl.BatchResult {
+		return []windowctl.BatchResult{
+			{Entry: entries[0], Err: nil},
+			{Entry: entries[1], Err: windowctl.ErrNoMatch},
+		}
+	}
+	rc := runBatch(stdin, &stdout, &stderr, "", false, apply)
+	if rc != 1 {
+		t.Fatalf("expected exit 1 when any entry fails, got %d", rc)
+	}
+	if !strings.Contains(stdout.String(), "[1] Ghostty: ok") {
+		t.Errorf("stdout missing success line, got %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "[2] Missing:") {
+		t.Errorf("stderr missing failure line, got %q", stderr.String())
+	}
+}
+
+// TestRunBatchAllOkExitsZero pins the symmetric guarantee: when every
+// entry succeeds the exit code is 0.
+func TestRunBatchAllOkExitsZero(t *testing.T) {
+	stdin := strings.NewReader(`[{"app":"Ghostty","zone":"1A"}]`)
+	var stdout, stderr bytes.Buffer
+	apply := func(entries []windowctl.BatchEntry) []windowctl.BatchResult {
+		return []windowctl.BatchResult{{Entry: entries[0], Err: nil}}
+	}
+	rc := runBatch(stdin, &stdout, &stderr, "", false, apply)
+	if rc != 0 {
+		t.Fatalf("expected exit 0 when all entries succeed, got %d (stderr=%q)", rc, stderr.String())
+	}
+}
+
+// TestRunBatchInvalidJSONExitsTwo pins that input-level errors (parse
+// failure) exit 2 — distinct from per-entry failures (1).
+func TestRunBatchInvalidJSONExitsTwo(t *testing.T) {
+	stdin := strings.NewReader(`{not json}`)
+	var stdout, stderr bytes.Buffer
+	apply := func(entries []windowctl.BatchEntry) []windowctl.BatchResult { return nil }
+	rc := runBatch(stdin, &stdout, &stderr, "", false, apply)
+	if rc != 2 {
+		t.Fatalf("expected exit 2 on invalid JSON input, got %d", rc)
+	}
+	if !strings.Contains(stderr.String(), "parsing JSON") {
+		t.Errorf("stderr missing parse-error context, got %q", stderr.String())
+	}
+}
+
+// TestRunBatchJSONOutputShape pins the --json wire format: a single
+// stdout array with one element per entry, each {"entry": {...},
+// "ok": true} or {"entry": {...}, "error": "..."}.
+func TestRunBatchJSONOutputShape(t *testing.T) {
+	stdin := strings.NewReader(`[
+		{"app":"Ghostty","zone":"1A"},
+		{"app":"Missing","zone":"1A"}
+	]`)
+	var stdout, stderr bytes.Buffer
+	apply := func(entries []windowctl.BatchEntry) []windowctl.BatchResult {
+		return []windowctl.BatchResult{
+			{Entry: entries[0], Err: nil},
+			{Entry: entries[1], Err: windowctl.ErrNoMatch},
+		}
+	}
+	rc := runBatch(stdin, &stdout, &stderr, "", true, apply)
+	if rc != 1 {
+		t.Fatalf("expected exit 1, got %d", rc)
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not a JSON array: %v\n%s", err, stdout.String())
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 result records, got %d: %s", len(got), stdout.String())
+	}
+	if got[0]["ok"] != true {
+		t.Errorf("entry 0 expected ok=true, got %v", got[0])
+	}
+	if _, hasOk := got[1]["ok"]; hasOk {
+		t.Errorf("entry 1 must NOT have ok set when it errored, got %v", got[1])
+	}
+	if _, hasErr := got[1]["error"]; !hasErr {
+		t.Errorf("entry 1 expected error field, got %v", got[1])
+	}
+}
+
 // TestErrAccessibilityDeniedNotPrefixedWithCommandName pins BUG-4:
 // the sentinel's message MUST NOT contain the leading "windowctl: "
 // prefix — the CLI adds it once at print time, so embedding it in the

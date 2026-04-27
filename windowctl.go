@@ -4,6 +4,7 @@
 package windowctl
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/muthuishere/windowctl/internal/core"
@@ -257,6 +258,85 @@ func matchOne(a Adapter, match Match) (Window, error) {
 		return Window{}, ErrNoMatch
 	}
 	return matches[0], nil
+}
+
+// BatchEntry describes a single move to apply as part of a Batch call.
+// Either Zone OR all four of X/Y/W/H must be set (mutually exclusive);
+// at least one of Title or App must be set. Monitor is optional and,
+// when set, must be >= 1. In coord mode with Monitor set, X/Y are
+// interpreted as monitor-relative (matching MoveCoords).
+//
+// Sample JSON shape (one element of the array `windowctl batch` reads):
+//
+//	{"app": "Ghostty", "monitor": 2, "x": 0, "y": 25, "w": 1920, "h": 1055}
+//	{"app": "Activity Monitor", "monitor": 1, "zone": "2A"}
+//	{"title": "Inbox", "x": 100, "y": 100, "w": 800, "h": 600}
+type BatchEntry struct {
+	Title   string `json:"title,omitempty"`
+	App     string `json:"app,omitempty"`
+	Monitor *int   `json:"monitor,omitempty"`
+	Zone    string `json:"zone,omitempty"`
+	X       *int   `json:"x,omitempty"`
+	Y       *int   `json:"y,omitempty"`
+	W       *int   `json:"w,omitempty"`
+	H       *int   `json:"h,omitempty"`
+}
+
+// BatchResult pairs a BatchEntry with the error (if any) that was
+// observed when applying it. Err is nil on success.
+type BatchResult struct {
+	Entry BatchEntry
+	Err   error
+}
+
+// Batch applies each entry in `entries` as a Move, sequentially, never
+// aborting when one entry fails. The returned slice is one-to-one with
+// `entries` (same order, same length); inspect each result's Err to
+// determine per-entry success.
+func Batch(entries []BatchEntry) []BatchResult {
+	return batchWith(defaultAdapter, entries)
+}
+
+func batchWith(a Adapter, entries []BatchEntry) []BatchResult {
+	results := make([]BatchResult, len(entries))
+	for i, e := range entries {
+		results[i] = BatchResult{Entry: e, Err: applyBatchEntry(a, e)}
+	}
+	return results
+}
+
+// applyBatchEntry validates a single BatchEntry and dispatches to the
+// matching *With helper. Validation mirrors moveCmd in cmd/windowctl:
+// must have Title or App; must have EITHER Zone OR all four of X/Y/W/H;
+// in coord mode W and H must be > 0; Monitor (if set) must be >= 1.
+func applyBatchEntry(a Adapter, e BatchEntry) error {
+	if e.Title == "" && e.App == "" {
+		return errors.New("batch entry: title or app is required")
+	}
+	hasCoord := e.X != nil || e.Y != nil || e.W != nil || e.H != nil
+	hasZone := e.Zone != ""
+	if hasZone && hasCoord {
+		return errors.New("batch entry: zone and x/y/w/h are mutually exclusive")
+	}
+	if !hasZone && !hasCoord {
+		return errors.New("batch entry: either zone or x/y/w/h is required")
+	}
+	if hasCoord {
+		if e.X == nil || e.Y == nil || e.W == nil || e.H == nil {
+			return errors.New("batch entry: x, y, w and h must all be set in coord mode (partial coords are not supported)")
+		}
+		if *e.W <= 0 || *e.H <= 0 {
+			return errors.New("batch entry: w and h must be > 0 in coord mode")
+		}
+	}
+	if e.Monitor != nil && *e.Monitor < 1 {
+		return errors.New("batch entry: monitor must be >= 1")
+	}
+	match := Match{Title: e.Title, App: e.App}
+	if hasZone {
+		return moveZoneWith(a, match, e.Monitor, e.Zone)
+	}
+	return moveCoordsWith(a, match, e.Monitor, Rect{X: *e.X, Y: *e.Y, W: *e.W, H: *e.H})
 }
 
 func applyFilter(ws []Window, f Filter) []Window {

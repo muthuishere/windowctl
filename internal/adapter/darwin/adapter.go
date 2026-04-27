@@ -151,24 +151,36 @@ static int wctl_collect_windows(wctl_window_t** out) {
     CFStringRef k_name   = CFSTR("kCGWindowName");
     CFStringRef k_owner  = CFSTR("kCGWindowOwnerName");
     CFStringRef k_bounds = CFSTR("kCGWindowBounds");
+    CFStringRef k_layer  = CFSTR("kCGWindowLayer");
 
+    int out_count = 0;
     for (CFIndex i = 0; i < n; i++) {
         const void* raw = CFArrayGetValueAtIndex(arr, i);
         if (raw == NULL) continue;
         CFDictionaryRef d = (CFDictionaryRef)raw;
 
-        ws[i].id     = wctl_dict_long(d, k_num);
-        ws[i].pid    = wctl_dict_long(d, k_pid);
-        ws[i].title  = wctl_dict_string(d, k_name);
-        ws[i].app    = wctl_dict_string(d, k_owner);
-        ws[i].has_bounds = wctl_dict_bounds(
-            d, k_bounds, &ws[i].x, &ws[i].y, &ws[i].w, &ws[i].h
+        // Layer 0 = normal application window. Anything higher is
+        // chrome (menu bar at 25, dock at 20, status items, Spotlight,
+        // Control Center, AltTab, etc.) — skip it so `windows list`
+        // shows only real app windows. Mirrors the cut already used
+        // by wctl_frontmost_window_bounds.
+        if (wctl_dict_long(d, k_layer) != 0) continue;
+
+        ws[out_count].id     = wctl_dict_long(d, k_num);
+        ws[out_count].pid    = wctl_dict_long(d, k_pid);
+        ws[out_count].title  = wctl_dict_string(d, k_name);
+        ws[out_count].app    = wctl_dict_string(d, k_owner);
+        ws[out_count].has_bounds = wctl_dict_bounds(
+            d, k_bounds,
+            &ws[out_count].x, &ws[out_count].y,
+            &ws[out_count].w, &ws[out_count].h
         );
+        out_count++;
     }
 
     CFRelease(arr);
     *out = ws;
-    return (int)n;
+    return out_count;
 }
 
 static void wctl_free_windows(wctl_window_t* ws, int count) {

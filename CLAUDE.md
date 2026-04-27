@@ -16,6 +16,8 @@ Uses [Taskfile](https://taskfile.dev):
 task build              # go build -o bin/windowctl ./cmd/windowctl
 task test               # go test ./...
 task lint               # go vet ./...
+task local-install      # build + symlink bin/windowctl → /usr/local/bin/windowctl (each `task build` is then live)
+task local-uninstall    # remove the dev symlink (only if it points at this repo)
 task snapshot           # goreleaser release --snapshot --skip=publish; stages binaries into npm/platforms/<os-arch>/bin/
 task release:dry-run    # same as snapshot, with --verbose for goreleaser config debugging
 task npm:bump -- 0.2.0  # sync version across main + 5 platform sub-packages
@@ -28,6 +30,7 @@ Single test: `go test ./... -run TestApplyFilterByTitleIsPartialAndCaseInsensiti
 Real-window smoke tests (run automatically by `.github/workflows/ci.yaml` via `task smoke-darwin` / `task smoke-windows` on the matching runner; the workflow installs `task` via `arduino/setup-task@v2`):
 
 - `task smoke-darwin` — builds CLI, launches TextEdit via LaunchServices (`open -a`), polls `windowctl windows list` until detected (10s budget), then runs `windowctl move` and auto-detects the AX state from the actual outcome — exit 0 means trust is inherited (asserts bounds within `WCTL_AX_TOLERANCE`, default 50px to absorb title-bar/chrome variance), exit !=0 with "Accessibility permission denied" means a fresh runner (asserts the denied error). `WCTL_SMOKE_AX=1` is an opt-in strict mode that REQUIRES the granted path, useful for catching TCC regressions on a known-good local setup.
+- `task smoke-darwin-apps` — per-app Move/Focus matrix on macOS for real third-party apps (Chrome, VSCode, etc.); override the set with `APPS="Google Chrome"`. Local-only, not part of CI.
 - `task smoke-windows` — builds CLI, launches Notepad, verifies `windows list` detects it and `move` succeeds.
 
 Module is Go 1.24, single dep `golang.org/x/sys`.
@@ -37,11 +40,11 @@ Module is Go 1.24, single dep `golang.org/x/sys`.
 Three layers, with build-tag-isolated platform code:
 
 1. **`cmd/windowctl/`** — flag parsing, table/JSON formatting. Calls only the public package. No OS code, no business logic.
-2. **Public package `github.com/muthuishere/windowctl`** (root `*.go` files) — `ListWindows`, `ListMonitors`, `Move`, `Focus`, `MoveZone`, `MoveCoords`. Re-exports `core` types. Holds shared logic that must remain OS-agnostic and unit-testable: filter matching (`applyFilter`), monitor auto-resolution (`resolveCurrentMonitor` — majority-overlap per FR-MOV-03), zone parsing (`zone.go`), and the relative-vs-absolute coord rule for `MoveCoords` (relative when `--monitor` is set).
+2. **Public package `github.com/muthuishere/windowctl`** (root `*.go` files) — `ListWindows`, `ListMonitors`, `Move`, `MoveZone`, `MoveCoords`, `Focus`, `Resize`, `RequestAccessibility`, `CheckAccessibility`. Re-exports `core` types. Holds shared logic that must remain OS-agnostic and unit-testable: filter matching (`applyFilter`), monitor auto-resolution (`resolveCurrentMonitor` — majority-overlap per FR-MOV-03), zone parsing (`zone.go`), and the relative-vs-absolute coord rule for `MoveCoords` (relative when `--monitor` is set). `ListWindows` also stamps `Window.Monitor` (1-indexed monitor ID under the centroid; 0 if off-screen) and `Window.Focused` (frontmost-in-z-order on the focused monitor) on the **unfiltered** list before applying the filter — so those fields stay consistent regardless of what the caller filters out (BUG-1 / BUG-9 in `bugs.md`).
 3. **`internal/core`** — OS-agnostic `Window`/`Monitor`/`Rect`/`Filter`/`Match`/`Target` types and the `Adapter` interface. Exists *only* to break the import cycle between the public package and the per-OS adapters; nothing else should live here.
 4. **`internal/adapter/{darwin,linux,windows}`** — one `Adapter` implementation per OS. Selected at link time by `adapter_darwin.go` / `adapter_linux.go` / `adapter_windows.go` (each with the matching `//go:build` tag) which call `newPlatformAdapter()`.
 
-The adapter interface is intentionally tiny (`ListWindows`, `ListMonitors`, `Move`, `Focus`, `RequestAccessibility`). Anything that can be expressed as composition of those primitives belongs in the public package, not the adapters. `RequestAccessibility` is a no-op on linux/windows and the only AX-prompting call site on darwin — surfaced through the `windowctl permissions` subcommand.
+The adapter interface is intentionally tiny (`ListWindows`, `ListMonitors`, `Move`, `Focus`, `RequestAccessibility`, `CheckAccessibility`). Anything that can be expressed as composition of those primitives belongs in the public package, not the adapters. `RequestAccessibility` is a no-op on linux/windows and the only AX-**prompting** call site on darwin — surfaced through `windowctl permissions`. `CheckAccessibility` is its read-only sibling: it inspects current AX trust without ever triggering the system dialog, and powers the script-friendly `windowctl permissions --status` (no-op returning true on linux/windows).
 
 ### Per-OS notes
 
