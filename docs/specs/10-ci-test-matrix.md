@@ -3,13 +3,16 @@
 > Part of the [windowctl OpenSpec capability set](./README.md).
 
 - **Status:** Partial — three-OS build & test matrix is live and green;
-  the Windows real-window smoke test exists as a runnable script
-  (`scripts/smoke-windows.ps1`) but is not yet wired into the workflow.
+  Windows and macOS real-window smoke tests are wired into the workflow
+  via the `task smoke-windows` / `task smoke-darwin` targets in
+  `Taskfile.yml` (which delegate to `scripts/smoke-windows.ps1` and
+  `scripts/smoke-darwin.sh` respectively); a Linux real-window smoke
+  test is still TBD.
 - **Source:** §10.1, §10.2, §10.3, §10.4
 - **Summary:** GitHub Actions runs `go build ./...`, `go vet ./...`, and
-  `go test ./...` on Ubuntu, macOS, and Windows on every push/PR, with a
-  Windows real-window smoke test as a follow-up workflow step. No Docker
-  is used for window tests.
+  `go test ./...` on Ubuntu, macOS, and Windows on every push/PR, with
+  Windows and macOS real-window smoke tests as follow-up workflow steps.
+  No Docker is used for window tests.
 
 ## Requirement: Build & test on three OSes
 
@@ -21,7 +24,7 @@
   `.github/workflows/ci.yaml`)
 - **AND** all three jobs must pass for the workflow to succeed
 
-## Requirement: Windows integration smoke test *(Pending workflow integration)*
+## Requirement: Windows integration smoke test *(Implemented)*
 
 ### Scenario: Real-window smoke test on Windows runner
 
@@ -29,16 +32,47 @@
 - **THEN** it builds the CLI, launches a real application (Notepad),
   detects it via `windowctl windows list --json`, executes a `move`,
   and verifies no errors are returned
+- **AND** the step is wired in `.github/workflows/ci.yaml` as
+  `task smoke-windows` (gated on `matrix.os == 'windows-latest'`),
+  with the Task runner installed via `arduino/setup-task@v2`
 
-> The smoke logic is implemented as `scripts/smoke-windows.ps1`. To
-> activate it, add this step to the `windows-latest` job in
-> `.github/workflows/ci.yaml`:
->
-> ```yaml
-> - name: Windows real-window smoke test
->   if: matrix.os == 'windows-latest'
->   run: pwsh ./scripts/smoke-windows.ps1
-> ```
+## Requirement: macOS integration smoke test *(Implemented)*
+
+### Scenario: Real-window smoke test on macOS runner (auto-detect)
+
+- **WHEN** the workflow runs on `macos-latest` (or the script runs
+  on a developer's local Mac)
+- **THEN** the step builds the CLI, launches TextEdit via
+  LaunchServices (`open -a TextEdit`), polls
+  `windowctl windows list --json` until TextEdit is detected (10s
+  budget, fail loud on timeout), runs `windowctl move`, and
+  branches on the actual outcome:
+  - move exit 0 → assert TextEdit's post-move bounds match the
+    requested rectangle within `WCTL_AX_TOLERANCE` pixels (default
+    50, to absorb the macOS title-bar / shadow / chrome-vs-content
+    geometry skew)
+  - move exit non-zero AND stderr contains "Accessibility permission
+    denied" → assert that's the case and pass (matches the macOS
+    adapter contract in [`01-os-spikes.md`](./01-os-spikes.md))
+  - any other outcome → fail
+- **AND** the step is wired in `.github/workflows/ci.yaml` as
+  `task smoke-darwin` (gated on `matrix.os == 'macos-latest'`),
+  with the Task runner installed via `arduino/setup-task@v2`
+- **WHY auto-detect:** both `macos-latest` runners and developers'
+  local Macs typically inherit Accessibility trust from the parent
+  shell process, so a "fresh, AX-denied" runner is the exception
+  rather than the default — asserting either path upfront is brittle
+
+### Scenario: Real-window smoke test on macOS runner (strict — AX granted)
+
+- **WHEN** the script runs locally with `WCTL_SMOKE_AX=1` after the
+  developer has confirmed Accessibility access is granted to the
+  invoking shell
+- **THEN** the script REQUIRES the granted path: move must exit 0
+  AND bounds must land within `WCTL_AX_TOLERANCE` pixels of the
+  request. If move returns `ErrAccessibilityDenied` despite the
+  flag, the script fails loudly (catches a regression where TCC
+  trust silently breaks on a previously-trusted setup)
 
 ## Requirement: Testing constraints
 
@@ -57,8 +91,5 @@
 | `task build` | Runs in CI on each OS to verify cross-platform build |
 | `task test` | Runs the unit-test matrix on each OS |
 | `task lint` | Runs the linter |
-
-> The Windows real-window smoke test is intentionally a workflow step
-> driving `scripts/smoke-windows.ps1`, not a standalone Taskfile
-> target — it depends on a clean Windows GUI runner that doesn't exist
-> on a developer's macOS or Linux box.
+| `task smoke-windows` | Drives `scripts/smoke-windows.ps1` (CI step on `windows-latest`) |
+| `task smoke-darwin` | Drives `scripts/smoke-darwin.sh` (CI step on `macos-latest`) |

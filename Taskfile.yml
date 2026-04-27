@@ -25,3 +25,13 @@ tasks:
     desc: Publish a release via GoReleaser
     cmds:
       - goreleaser release --clean
+
+  smoke-darwin:
+    desc: Run the macOS real-window smoke test (TextEdit via LaunchServices, no AppleScript)
+    cmds:
+      - bash ./scripts/smoke-darwin.sh
+
+  smoke-windows:
+    desc: Run the Windows real-window smoke test (Notepad)
+    cmds:
+      - pwsh ./scripts/smoke-windows.ps1

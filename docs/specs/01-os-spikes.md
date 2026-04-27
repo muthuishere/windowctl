@@ -14,31 +14,72 @@ This spec is the foundation every later capability depends on. It is not a
 user-facing CLI command on its own; it is the per-OS proof that the adapter
 contract is real.
 
-## Requirement: macOS adapter spike *(Partial — list paths real, move/focus stubbed)*
+## Requirement: macOS adapter spike *(Implemented)*
 
 ### Scenario: Enumerate windows and monitors on macOS
 
 - **WHEN** the macOS adapter is built (CGO enabled, `-framework
-  CoreGraphics -framework CoreFoundation`)
+  CoreGraphics -framework CoreFoundation -framework
+  ApplicationServices -framework AppKit`)
 - **THEN** `ListWindows` enumerates real windows via
   `CGWindowListCopyWindowInfo` and `ListMonitors` enumerates displays
   via `CGGetActiveDisplayList`, exposed through the same Go interface
   used by the other platforms
+- **AND** a plain `windowctl windows list` does NOT trigger the
+  Accessibility permission prompt (no AX call happens during list
+  paths or at adapter construction)
 
 ### Scenario: Move and Focus on macOS
 
 - **WHEN** the macOS adapter is asked to move or focus a window
-- **THEN** the call returns `core.ErrNotImplemented` until the
-  Accessibility (AX) wiring lands as a follow-up slice
-- **AND** the macOS smoke test (`scripts/smoke-darwin.sh`) asserts
-  this explicitly so the gap stays loud rather than silent
+- **THEN** the adapter first re-fetches the CG window entry by ID via
+  `CGWindowListCopyWindowInfo` (no adapter-level cache of any prior
+  `ListWindows` result) to obtain the owner PID and current bounds at
+  call time
+- **AND** it walks `AXUIElementCreateApplication(pid)` →
+  `kAXWindowsAttribute` and disambiguates against the CG entry by
+  matching `kAXTitleAttribute` and the AX position+size against the
+  CG bounds (with a small pixel tolerance to account for window-shadow
+  geometry differences between CG and AX)
+- **AND** for `Move` it calls `AXUIElementSetAttributeValue` for
+  `kAXPositionAttribute` and `kAXSizeAttribute` against the resolved
+  AX window
+- **AND** for `Focus` it calls `AXUIElementPerformAction` with
+  `kAXRaiseAction` on the resolved AX window and then calls
+  `[NSRunningApplication activateWithOptions:]` on the owning app to
+  bring the application's process to the foreground
+- **AND** Public `Window.ID` stays a `CGWindowID` decimal string —
+  the `core.Adapter` interface shape is unchanged
 
-### Scenario: Accessibility permission denied on macOS *(future work)*
+### Scenario: Accessibility permission denied on macOS
 
-- **WHEN** the macOS adapter (post-AX wiring) is invoked without
-  Accessibility permission
-- **THEN** the operation will exit non-zero with an instruction to
-  grant Accessibility access
+- **WHEN** the macOS adapter `Move` or `Focus` is invoked and the
+  current process is not trusted by Accessibility
+  (`AXIsProcessTrustedWithOptions` returns false)
+- **THEN** the operation exits non-zero with the
+  `core.ErrAccessibilityDenied` sentinel, whose message instructs the
+  user to grant Accessibility access in System Settings → Privacy &
+  Security → Accessibility (per requirements §11)
+- **AND** the AX permission prompt is only triggered by `Move` /
+  `Focus` calls — never during adapter construction or `ListWindows`
+  / `ListMonitors`
+
+### Scenario: Window vanished between list and move on macOS
+
+- **WHEN** `Move` or `Focus` is called with a window ID whose CG
+  entry can no longer be found (window was closed or app quit
+  between the list and the action)
+- **THEN** the operation exits non-zero with `core.ErrNoMatch` and a
+  message that mentions the window may have been closed
+
+### Scenario: Title collision on macOS (FR-MOV-04 first-match)
+
+- **WHEN** the same application has two windows with identical title
+  AND identical bounds
+- **THEN** `Move` and `Focus` resolve to the first AX window that
+  matches both attributes during the AX walk, consistent with the
+  FR-MOV-04 first-match rule (the lookup is deterministic per
+  `AXUIElementCopyAttributeValue(kAXWindowsAttribute)` ordering)
 
 ## Requirement: Windows adapter spike
 
