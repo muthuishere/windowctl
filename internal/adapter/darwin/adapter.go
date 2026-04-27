@@ -180,6 +180,56 @@ static void wctl_free_windows(wctl_window_t* ws, int count) {
     free(ws);
 }
 
+// Cursor location in the global CG coordinate space. Used by the
+// public layer to mark which monitor is currently "active" (under the
+// pointer). CGEventCreate(NULL) is a stateless query — no events are
+// posted; no Accessibility prompt; no Input Monitoring permission
+// required.
+static void wctl_cursor_pos(double* x, double* y) {
+    CGEventRef e = CGEventCreate(NULL);
+    if (!e) { *x = 0; *y = 0; return; }
+    CGPoint p = CGEventGetLocation(e);
+    *x = p.x; *y = p.y;
+    CFRelease(e);
+}
+
+// Bounds of the topmost on-screen window with kCGWindowLayer == 0
+// (the layer normal app windows live on; menu bar, dock, status
+// items, etc. live on higher layers and we want to skip them). CG
+// returns kCGWindowListOptionOnScreenOnly entries already in z-order
+// top-down, so the first match is "frontmost."
+//
+// Returns 1 with bounds written on success, 0 if no eligible window
+// is up (e.g. the desktop is empty / Mission Control is open). The
+// public layer marks Focused = monitor containing this rect's center.
+static int wctl_frontmost_window_bounds(double* x, double* y,
+                                        double* w, double* h) {
+    *x = *y = *w = *h = 0;
+    CFArrayRef arr = CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        kCGNullWindowID
+    );
+    if (!arr) return 0;
+
+    CFStringRef k_layer  = CFSTR("kCGWindowLayer");
+    CFStringRef k_bounds = CFSTR("kCGWindowBounds");
+    int found = 0;
+    CFIndex n = CFArrayGetCount(arr);
+    for (CFIndex i = 0; i < n; i++) {
+        CFDictionaryRef d = (CFDictionaryRef)CFArrayGetValueAtIndex(arr, i);
+        if (!d) continue;
+        // Layer 0 = normal application window. Anything higher is
+        // chrome (menu bar at 25, dock at 20, status items, etc.).
+        if (wctl_dict_long(d, k_layer) != 0) continue;
+        if (!wctl_dict_bounds(d, k_bounds, x, y, w, h)) continue;
+        if (*w <= 0 || *h <= 0) continue;
+        found = 1;
+        break;
+    }
+    CFRelease(arr);
+    return found;
+}
+
 // Collect all active monitors. Same memory ownership pattern as
 // wctl_collect_windows but no nested allocations, so caller just calls
 // free() on the returned pointer.
@@ -312,36 +362,50 @@ static int wctl_window_for_id(long id, long* out_pid,
 // CG hints. Returns the AXUIElementRef on success (caller owns;
 // CFRelease when done) or NULL on miss / failure.
 //
-// Matching strategy:
-//   1) If the CG title is non-empty, prefer the first AX window
-//      whose kAXTitleAttribute string-equals it. macOS guarantees
-//      title equality is the strongest practical disambiguator, and
-//      doing it first sidesteps the well-known CG-vs-AX bounds
-//      skew (CG reports the visual frame minus shadow; AX reports
-//      the structural frame, off by the title-bar height ~28px).
-//   2) If multiple AX windows share the same title (rare; FR-MOV-04
-//      first-match), break the tie by picking the one whose AX
-//      position+size are within WCTL_AX_BOUNDS_TOL of the CG
-//      bounds. If still tied, take the first — consistent with
-//      kAXWindowsAttribute ordering (z-order top-down).
-//   3) If the CG title is empty/NULL (some windows hide the title
-//      until Screen Recording is granted), fall back to bounds-only
-//      matching with the same tolerance.
+// Matching precedence (best signal first):
+//   1) Title + bounds both agree — strongest evidence; rare collisions.
+//   2) Title alone agrees — works for most Cocoa apps; bounds may
+//      drift by the title-bar/shadow skew.
+//   3) Bounds alone agree (within WCTL_AX_BOUNDS_TOL) — needed for
+//      Chrome / Safari / Electron apps where AX titles append the
+//      browser name and profile (e.g. CG "MyPage", AX "MyPage - Google
+//      Chrome - Profile"). CG is the ground truth for which window
+//      the user matched on, so when bounds line up we trust it.
+//   4) Single AX window for the PID — if the app has exactly one
+//      top-level window, there's no ambiguity even when title and
+//      bounds both disagree (e.g. mid-animation, Spaces transition).
+//
+// All four levels are evaluated in one pass; the highest-priority
+// non-null hit wins.
+// WCTL_AX_DEBUG=1 in the environment enables per-call dumps of the
+// PID's AX window list to stderr — kept gated and cheap because the
+// CG↔AX title/bounds disagreement that breaks Chrome (and rarely
+// other apps) is impossible to debug from outside the walk. Free
+// when unset; safe to leave in shipping binaries.
 static AXUIElementRef wctl_ax_resolve(pid_t pid, const char* cg_title,
                                        double cx, double cy,
                                        double cw, double ch) {
+    int debug = (getenv("WCTL_AX_DEBUG") != NULL);
     AXUIElementRef app = AXUIElementCreateApplication(pid);
-    if (!app) return NULL;
+    if (!app) {
+        if (debug) fprintf(stderr, "[ax] pid=%d AXUIElementCreateApplication=NULL\n", pid);
+        return NULL;
+    }
 
     CFArrayRef windows = NULL;
     AXError err = AXUIElementCopyAttributeValue(
         app, kAXWindowsAttribute, (CFTypeRef*)&windows
     );
     if (err != kAXErrorSuccess || windows == NULL) {
+        if (debug) fprintf(stderr, "[ax] pid=%d kAXWindowsAttribute err=%d windows=%p\n",
+                           pid, err, (void*)windows);
         if (windows) CFRelease(windows);
         CFRelease(app);
         return NULL;
     }
+    if (debug) fprintf(stderr, "[ax] pid=%d cg_title=%s cg_bounds=(%.0f,%.0f %.0fx%.0f) ax_window_count=%ld\n",
+                       pid, cg_title ? cg_title : "(null)", cx, cy, cw, ch,
+                       (long)CFArrayGetCount(windows));
 
     CFStringRef cg_title_cf = NULL;
     if (cg_title != NULL && cg_title[0] != '\0') {
@@ -388,6 +452,18 @@ static AXUIElementRef wctl_ax_resolve(pid_t pid, const char* cg_title,
             geom_match = (dx <= WCTL_AX_BOUNDS_TOL && dy <= WCTL_AX_BOUNDS_TOL &&
                           dw <= WCTL_AX_BOUNDS_TOL && dh <= WCTL_AX_BOUNDS_TOL);
         }
+        if (debug) {
+            CFStringRef ax_title = NULL;
+            AXUIElementCopyAttributeValue(w, kAXTitleAttribute, (CFTypeRef*)&ax_title);
+            char tbuf[256] = "(none)";
+            if (ax_title) {
+                CFStringGetCString(ax_title, tbuf, sizeof(tbuf), kCFStringEncodingUTF8);
+                CFRelease(ax_title);
+            }
+            fprintf(stderr, "[ax]   window[%ld] title=\"%s\" ax_pos=(%.0f,%.0f) ax_size=(%.0fx%.0f) title_match=%d geom_match=%d\n",
+                    (long)i, tbuf, p.x, p.y, s.width, s.height, title_match, geom_match);
+        }
+
         if (pos) CFRelease(pos);
         if (siz) CFRelease(siz);
 
@@ -397,15 +473,29 @@ static AXUIElementRef wctl_ax_resolve(pid_t pid, const char* cg_title,
         if (title_match && title_hit == NULL) {
             title_hit = w;
         }
-        if (cg_title_cf == NULL && geom_match && geom_hit == NULL) {
+        if (geom_match && geom_hit == NULL) {
             geom_hit = w;
         }
     }
 
+    // Single-window fallback: Chrome / Safari / Electron apps
+    // sometimes refuse AX position queries during the first ~100ms of
+    // a window's life or while a Space animation is in flight, so
+    // both title and bounds checks above can come up empty even
+    // though the AX tree clearly contains exactly one window for the
+    // PID. In that degenerate case the binding is unambiguous.
+    AXUIElementRef only_hit = (n == 1) ? (AXUIElementRef)CFArrayGetValueAtIndex(windows, 0) : NULL;
+
     AXUIElementRef chosen = title_geom_hit;
     if (chosen == NULL) chosen = title_hit;
     if (chosen == NULL) chosen = geom_hit;
+    if (chosen == NULL) chosen = only_hit;
     if (chosen != NULL) CFRetain(chosen);
+    if (debug) fprintf(stderr, "[ax] chosen=%s\n",
+                       chosen == title_geom_hit ? "title+geom" :
+                       chosen == title_hit ? "title" :
+                       chosen == geom_hit ? "geom" :
+                       chosen == only_hit ? "only-window" : "NONE");
 
     if (cg_title_cf) CFRelease(cg_title_cf);
     CFRelease(windows);
@@ -582,7 +672,47 @@ func (a *Adapter) ListMonitors() ([]core.Monitor, error) {
 			Primary: ms[i].primary != 0,
 		})
 	}
+
+	// Stamp Active (cursor) and Focused (frontmost window centroid).
+	// Both probes are stateless CG queries, so it's fine to do them
+	// every ListMonitors call — list is not on a hot path.
+	var cx, cy C.double
+	C.wctl_cursor_pos(&cx, &cy)
+	markActive(out, int(cx), int(cy))
+
+	var fx, fy, fw, fh C.double
+	if C.wctl_frontmost_window_bounds(&fx, &fy, &fw, &fh) != 0 {
+		markFocused(out, int(fx)+int(fw)/2, int(fy)+int(fh)/2)
+	}
 	return out, nil
+}
+
+// markActive sets Active=true on whichever monitor contains (px, py).
+// No-op if the cursor sits in negative space outside every display
+// (rare but possible during a Spaces transition or hot-unplug).
+func markActive(ms []core.Monitor, px, py int) {
+	for i := range ms {
+		m := ms[i]
+		if px >= m.X && px < m.X+m.Width && py >= m.Y && py < m.Y+m.Height {
+			ms[i].Active = true
+			return
+		}
+	}
+}
+
+// markFocused sets Focused=true on whichever monitor contains the
+// centroid of the frontmost window. Centroid (not top-left) is the
+// right anchor: a window straddling two displays "belongs to" the
+// one it occupies more of, matching how macOS itself routes
+// keyboard focus.
+func markFocused(ms []core.Monitor, cx, cy int) {
+	for i := range ms {
+		m := ms[i]
+		if cx >= m.X && cx < m.X+m.Width && cy >= m.Y && cy < m.Y+m.Height {
+			ms[i].Focused = true
+			return
+		}
+	}
 }
 
 func (a *Adapter) Move(id string, b core.Rect) error {

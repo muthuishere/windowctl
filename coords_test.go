@@ -19,11 +19,10 @@ func TestMoveCoordsWithoutMonitorTreatsBoundsAsAbsolute(t *testing.T) {
 
 func TestMoveCoordsWithMonitorTreatsBoundsAsRelative(t *testing.T) {
 	a := newMovingAdapter()
-	id := 1
+	id := 2 // 1-indexed: monitor 2 is the right-side display at X=1920.
 	if err := moveCoordsWith(a, Match{Title: "chrome"}, &id, Rect{X: 50, Y: 60, W: 800, H: 600}); err != nil {
 		t.Fatal(err)
 	}
-	// monitor 1 is at X=1920, so relative (50,60) becomes absolute (1970, 60).
 	want := Rect{X: 1920 + 50, Y: 0 + 60, W: 800, H: 600}
 	if got := a.moved["w1"]; got != want {
 		t.Fatalf("got %+v, want %+v (monitor-relative)", got, want)

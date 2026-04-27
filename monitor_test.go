@@ -47,6 +47,32 @@ func TestFindMonitorReturnsErrorForUnknownID(t *testing.T) {
 	}
 }
 
+func TestSortMonitorsOrdersByOriginAndReassignsIDs(t *testing.T) {
+	// Mirrors a real 3-display layout where the OS returned them in a
+	// non-spatial order: small Sidecar at x=3840 came back as id 1 and
+	// the secondary at x=1920 as id 2. Sorted output must be left-to-
+	// right with IDs renumbered 0,1,2.
+	in := []Monitor{
+		{ID: 99, X: 0, Y: 0, Width: 1920, Height: 1080, Primary: true},
+		{ID: 99, X: 3840, Y: 30, Width: 1024, Height: 640},
+		{ID: 99, X: 1920, Y: 0, Width: 1920, Height: 1080},
+	}
+	got := sortMonitors(in)
+	wantX := []int{0, 1920, 3840}
+	wantID := []int{1, 2, 3}
+	for i, m := range got {
+		if m.ID != wantID[i] {
+			t.Fatalf("monitor[%d]: ID = %d, want %d (1-indexed)", i, m.ID, wantID[i])
+		}
+		if m.X != wantX[i] {
+			t.Fatalf("monitor[%d]: X = %d, want %d", i, m.X, wantX[i])
+		}
+	}
+	if !got[0].Primary {
+		t.Fatalf("primary flag lost during sort")
+	}
+}
+
 type movingAdapter struct {
 	mockAdapter
 }
@@ -63,7 +89,7 @@ func newMovingAdapter() *movingAdapter {
 
 func TestMoveZonePlacesWindowOnExplicitMonitor(t *testing.T) {
 	a := newMovingAdapter()
-	id := 1
+	id := 2 // 1-indexed: monitor 2 is the right-side display at X=1920.
 	if err := moveZoneWith(a, Match{Title: "chrome"}, &id, "2B"); err != nil {
 		t.Fatal(err)
 	}

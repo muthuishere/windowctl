@@ -32,7 +32,15 @@ func ListWindows(filter Filter) ([]Window, error) {
 }
 
 func ListMonitors() ([]Monitor, error) {
-	return defaultAdapter.ListMonitors()
+	return listMonitorsWith(defaultAdapter)
+}
+
+func listMonitorsWith(a Adapter) ([]Monitor, error) {
+	ms, err := a.ListMonitors()
+	if err != nil {
+		return nil, err
+	}
+	return sortMonitors(ms), nil
 }
 
 func Move(match Match, target Target) error {
@@ -41,6 +49,22 @@ func Move(match Match, target Target) error {
 
 func Focus(match Match) error {
 	return focusWith(defaultAdapter, match)
+}
+
+// Resize changes the matched window's width and height while keeping
+// its current X/Y position. It's a thin convenience over Move that
+// avoids forcing callers to first list the window just to read its
+// current top-left.
+func Resize(match Match, width, height int) error {
+	return resizeWith(defaultAdapter, match, width, height)
+}
+
+func resizeWith(a Adapter, match Match, width, height int) error {
+	w, err := matchOne(a, match)
+	if err != nil {
+		return err
+	}
+	return a.Move(w.ID, Rect{X: w.Bounds.X, Y: w.Bounds.Y, W: width, H: height})
 }
 
 // RequestAccessibility asks the platform adapter to verify (and on
@@ -107,7 +131,7 @@ func moveZoneWith(a Adapter, match Match, monitorID *int, zoneStr string) error 
 	if err != nil {
 		return err
 	}
-	monitors, err := a.ListMonitors()
+	monitors, err := listMonitorsWith(a)
 	if err != nil {
 		return err
 	}
@@ -133,7 +157,7 @@ func moveCoordsWith(a Adapter, match Match, monitorID *int, bounds Rect) error {
 	}
 	final := bounds
 	if monitorID != nil {
-		monitors, err := a.ListMonitors()
+		monitors, err := listMonitorsWith(a)
 		if err != nil {
 			return err
 		}

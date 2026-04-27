@@ -1,30 +1,31 @@
 # windowctl
 
-**windowctl** is a cross-platform command-line interface (CLI) tool for managing desktop windows and monitors in a consistent, scriptable way.
+**windowctl** is a cross-platform CLI **and** Go library for managing desktop windows and monitors on macOS, Windows, and Linux in a consistent, scriptable way.
 
 ## Overview
 
-Windowctl exposes a unified interface across macOS, Windows, and Linux for:
+A unified interface across macOS, Windows, and Linux for:
 
-- Listing windows and monitors
+- Listing windows and monitors (with which monitor is currently active and which holds the focused window)
 - Filtering windows by title or application name
-- Moving windows across monitors
-- Applying structured, declarative layouts
+- Moving windows across monitors using zones or absolute/relative coordinates
+- Resizing windows in place
 - Focusing specific windows
-
-It is distributed both as a **CLI tool** and as a **Go library**, enabling programmatic use in other tools and scripts.
+- Granting macOS Accessibility permission interactively
 
 ## Installation
 
 ### npm (recommended)
 
 ```sh
-npx windowctl <command>
+npx @muthuishere/windowctl <command>
 ```
 
 ```sh
-npm install -g windowctl
+npm install -g @muthuishere/windowctl
 ```
+
+The npm package is a thin JS launcher that resolves the matching `@muthuishere/windowctl-<os>-<arch>` sub-package (darwin-arm64, darwin-x64, linux-arm64, linux-x64, windows-x64) via `optionalDependencies`. No postinstall download, no GitHub Releases dependency at install time.
 
 ### Go
 
@@ -36,9 +37,20 @@ go install github.com/muthuishere/windowctl/cmd/windowctl@latest
 
 Download the appropriate binary for your platform from the [Releases](../../releases) page.
 
+## macOS Accessibility permission
+
+Move and Focus on macOS require Accessibility (AX) permission for the parent process (your shell, your editor, etc.). The first call from a new parent prompts you in System Settings → Privacy & Security → Accessibility.
+
+```sh
+windowctl permissions          # trigger the AX prompt (first time only)
+windowctl permissions --status # check current trust without prompting
+```
+
+`windows list` and `monitors list` work without AX. Only Move/Focus/Resize need it.
+
 ## Usage
 
-### List Windows
+### List windows
 
 ```sh
 windowctl windows list
@@ -46,52 +58,69 @@ windowctl windows list --title "chrome"
 windowctl windows list --app "Firefox" --json
 ```
 
-### List Monitors
+### List monitors
 
 ```sh
 windowctl monitors list
 ```
 
-### Move a Window
-
-```sh
-# Move to monitor 2, top-right quadrant (zone 2B)
-windowctl move --title "chrome" --monitor 2 --zone 2B
-
-# Move to the left half of the current monitor (zone 1A)
-windowctl move --title "Terminal" --zone 1A
-
-# Move to a split zone (first third of screen)
-windowctl move --title "Slack" --zone 3:1
-
-# Move using absolute coordinates
-windowctl move --title "chrome" --x 0 --y 0 --w 960 --h 1080
+```
+ID  X     Y   WIDTH  HEIGHT  PRIMARY  ACTIVE  FOCUSED
+1   0     0   1920   1080    true     true    false
+2   1920  0   1920   1080    false    false   true
+3   3840  30  1024   640     false    false   false
 ```
 
-### Focus a Window
+- **ID** is **1-indexed** and assigned by ascending `(X, Y)` origin so the leftmost display is always `1`. Stable across reboots and re-plugs (system enumeration order is not).
+- **ACTIVE** = the cursor is currently over this monitor.
+- **FOCUSED** = the frontmost window's centroid is on this monitor. Independent of ACTIVE — you can mouse over one display while typing into a window on another.
+
+### Move a window
+
+```sh
+# Top-right quadrant of monitor 2
+windowctl move --app "Google Chrome" --monitor 2 --zone 2B
+
+# Left half of the monitor that contains the matched window
+windowctl move --title "Terminal" --zone 1A
+
+# First third of the screen (split zone)
+windowctl move --title "Slack" --zone 3:1
+
+# Absolute coordinates
+windowctl move --title "chrome" --x 0 --y 0 --w 960 --h 1080
+
+# Monitor-relative coordinates (--x/--y relative to monitor 2's origin)
+windowctl move --app "Code" --monitor 2 --x 100 --y 100 --w 800 --h 600
+```
+
+### Resize a window
+
+Keeps the window's current `X`/`Y` and only changes its size.
+
+```sh
+windowctl resize --app "Google Chrome" --w 900 --h 700
+```
+
+### Focus a window
 
 ```sh
 windowctl focus --title "jira"
-```
-
-### Apply a Layout
-
-```sh
-windowctl apply layout.yaml
+windowctl focus --app "Google Chrome"
 ```
 
 ## Zones
 
 ### Predefined (Enum) Zones
 
-| Zone | Description      |
-|------|------------------|
-| 1A   | Left half        |
-| 1B   | Right half       |
-| 2A   | Top-left quarter |
-| 2B   | Top-right quarter|
-| 2C   | Bottom-left quarter|
-| 2D   | Bottom-right quarter|
+| Zone | Description          |
+|------|----------------------|
+| 1A   | Left half            |
+| 1B   | Right half           |
+| 2A   | Top-left quarter     |
+| 2B   | Top-right quarter    |
+| 2C   | Bottom-left quarter  |
+| 2D   | Bottom-right quarter |
 
 ### Split Zones (`N:M`)
 
@@ -105,38 +134,70 @@ Divide the screen into N equal columns and place the window in column M.
 3:3  →  last third
 ```
 
-## Platform Support
+## Filter matching
 
-| Platform | Status          | Backend                        |
-|----------|-----------------|--------------------------------|
-| macOS    | Supported       | CoreGraphics + Accessibility API |
-| Windows  | Supported       | Win32 (user32.dll)             |
-| Linux    | Best-effort     | X11 / wmctrl fallback          |
-| Wayland  | Limited         | Best-effort only               |
+- `--title` is a **case-insensitive substring** match.
+- `--app` is a **case-insensitive exact** match against the OS-reported app name (e.g. VSCode reports `Code`, Chrome reports `Google Chrome`).
+
+When multiple windows match, the first one is used.
+
+## Platform support
+
+| Platform | Status      | Backend                          |
+|----------|-------------|----------------------------------|
+| macOS    | Supported   | CoreGraphics + Accessibility API |
+| Windows  | Supported   | Win32 (`user32.dll`)             |
+| Linux    | Best-effort | `wmctrl` / `xrandr`              |
+| Wayland  | Limited     | Best-effort only                 |
 
 ## Building
 
 This project uses [Taskfile](https://taskfile.dev) for build orchestration.
 
 ```sh
-task build      # Build CLI binary
-task test       # Run tests
-task lint       # Run linter
-task snapshot   # Build snapshot release
-task release    # Publish release via GoReleaser
+task build              # Build CLI binary
+task test               # Run unit tests
+task lint               # go vet
+task snapshot           # Cross-compile + stage npm binaries (no publish)
+task smoke-darwin       # macOS real-window smoke (TextEdit)
+task smoke-darwin-apps  # macOS per-app Move/Focus matrix (Chrome, Safari, VSCode, ...)
+task smoke-windows      # Windows real-window smoke (Notepad)
+task release -- 0.x.0   # Local release: bump → build → publish 6 npm pkgs → tag → GH release
 ```
 
-## Go Library
-
-windowctl can be used as a Go library:
+## Go library
 
 ```go
 import "github.com/muthuishere/windowctl"
 
 windows, err := windowctl.ListWindows(windowctl.Filter{Title: "chrome"})
 monitors, err := windowctl.ListMonitors()
-err = windowctl.Move(match, target)
+
+match := windowctl.Match{App: "Google Chrome"}
+
+// Move via zone (auto-resolves current monitor when monitorID is nil)
+err = windowctl.MoveZone(match, nil, "2B")
+
+// Move via coordinates (absolute when monitorID is nil; otherwise relative)
+err = windowctl.MoveCoords(match, nil, windowctl.Rect{X: 0, Y: 0, W: 960, H: 1080})
+
+// Resize in place
+err = windowctl.Resize(match, 900, 700)
+
+// Focus
 err = windowctl.Focus(match)
+
+// macOS AX prompt / status
+err = windowctl.RequestAccessibility()
+trusted := windowctl.CheckAccessibility()
+```
+
+## Debugging
+
+Set `WCTL_AX_DEBUG=1` to dump the macOS Accessibility window-resolution walk to stderr. Useful when Move/Focus reports `window <id> is gone from the AX tree` — the dump shows the per-PID AX window list and which match rule (title / geometry / single-window) was used.
+
+```sh
+WCTL_AX_DEBUG=1 windowctl move --app "Google Chrome" --x 100 --y 100 --w 800 --h 600
 ```
 
 ## License

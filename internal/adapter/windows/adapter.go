@@ -28,7 +28,11 @@ var (
 	procGetWindowThreadPID  = user32.NewProc("GetWindowThreadProcessId")
 	procEnumDisplayMonitors = user32.NewProc("EnumDisplayMonitors")
 	procGetMonitorInfoW     = user32.NewProc("GetMonitorInfoW")
+	procGetCursorPos        = user32.NewProc("GetCursorPos")
+	procGetForegroundWnd    = user32.NewProc("GetForegroundWindow")
 )
+
+type point struct{ X, Y int32 }
 
 type rect struct{ Left, Top, Right, Bottom int32 }
 
@@ -133,7 +137,38 @@ func (a *Adapter) ListMonitors() ([]core.Monitor, error) {
 	if enumErr != nil {
 		return nil, enumErr
 	}
+
+	// Stamp Active (cursor) + Focused (foreground window centroid).
+	// GetCursorPos / GetForegroundWindow / GetWindowRect are
+	// stateless and require no special permissions on Windows, so
+	// it's fine to do these on every list call.
+	var p point
+	if ret, _, _ := procGetCursorPos.Call(uintptr(unsafe.Pointer(&p))); ret != 0 {
+		stampMonitorByPoint(out, int(p.X), int(p.Y), func(m *core.Monitor) { m.Active = true })
+	}
+	hwnd, _, _ := procGetForegroundWnd.Call()
+	if hwnd != 0 {
+		var r rect
+		if ret, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r))); ret != 0 {
+			cx := int(r.Left) + (int(r.Right)-int(r.Left))/2
+			cy := int(r.Top) + (int(r.Bottom)-int(r.Top))/2
+			stampMonitorByPoint(out, cx, cy, func(m *core.Monitor) { m.Focused = true })
+		}
+	}
 	return out, nil
+}
+
+// stampMonitorByPoint runs `set` against the first monitor whose
+// bounds contain (x, y). Shared between cursor (Active) and
+// foreground-centroid (Focused) probes.
+func stampMonitorByPoint(ms []core.Monitor, x, y int, set func(*core.Monitor)) {
+	for i := range ms {
+		m := ms[i]
+		if x >= m.X && x < m.X+m.Width && y >= m.Y && y < m.Y+m.Height {
+			set(&ms[i])
+			return
+		}
+	}
 }
 
 func (a *Adapter) Move(id string, b core.Rect) error {

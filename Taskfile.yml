@@ -31,6 +31,11 @@ tasks:
     cmds:
       - bash ./scripts/smoke-darwin.sh
 
+  smoke-darwin-apps:
+    desc: "macOS per-app Move/Focus matrix (Chrome, VSCode, etc.). Override with APPS=\"Google Chrome\""
+    cmds:
+      - bash ./scripts/smoke-darwin-apps.sh
+
   smoke-windows:
     desc: Run the Windows real-window smoke test (Notepad)
     cmds:

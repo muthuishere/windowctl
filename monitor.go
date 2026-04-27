@@ -1,6 +1,30 @@
 package windowctl
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
+
+// sortMonitors normalizes a raw adapter monitor list into the order the
+// public API exposes: ascending X, then ascending Y, with IDs re-assigned
+// 1..N. The adapters' native enumeration order (CGGetActiveDisplayList
+// on darwin, EnumDisplayMonitors on windows) is system-defined and not
+// stable across reboots/replugs; sorting by origin gives `--monitor 1/2/3`
+// a predictable left-to-right meaning the user can read off
+// `windowctl monitors list`. IDs are 1-indexed (not 0) because users
+// think "monitor 1, monitor 2" — 0 reads as "no monitor."
+func sortMonitors(ms []Monitor) []Monitor {
+	sort.SliceStable(ms, func(i, j int) bool {
+		if ms[i].X != ms[j].X {
+			return ms[i].X < ms[j].X
+		}
+		return ms[i].Y < ms[j].Y
+	})
+	for i := range ms {
+		ms[i].ID = i + 1
+	}
+	return ms
+}
 
 // resolveCurrentMonitor returns the monitor containing the majority of the
 // window's visible area, per FR-MOV-03. When no monitor overlaps the window

@@ -28,6 +28,8 @@ func main() {
 		moveCmd(os.Args[2:])
 	case "focus":
 		focusCmd(os.Args[2:])
+	case "resize":
+		resizeCmd(os.Args[2:])
 	case "permissions":
 		permissionsCmd(os.Args[2:])
 	case "-h", "--help", "help":
@@ -47,6 +49,7 @@ Usage:
   windowctl monitors list [--json]
   windowctl move (--title <s> | --app <s>) [--monitor <n>] (--zone <z> | --x <n> --y <n> --w <n> --h <n>)
   windowctl focus (--title <s> | --app <s>)
+  windowctl resize (--title <s> | --app <s>) --w <n> --h <n>
   windowctl permissions [--status]`)
 }
 
@@ -110,9 +113,10 @@ func printWindowsJSON(out io.Writer, ws []windowctl.Window) error {
 
 func printMonitorsTable(out io.Writer, ms []windowctl.Monitor) {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tX\tY\tWIDTH\tHEIGHT\tPRIMARY")
+	fmt.Fprintln(tw, "ID\tX\tY\tWIDTH\tHEIGHT\tPRIMARY\tACTIVE\tFOCUSED")
 	for _, m := range ms {
-		fmt.Fprintf(tw, "%d\t%d\t%d\t%d\t%d\t%t\n", m.ID, m.X, m.Y, m.Width, m.Height, m.Primary)
+		fmt.Fprintf(tw, "%d\t%d\t%d\t%d\t%d\t%t\t%t\t%t\n",
+			m.ID, m.X, m.Y, m.Width, m.Height, m.Primary, m.Active, m.Focused)
 	}
 	_ = tw.Flush()
 }
@@ -185,6 +189,29 @@ func focusCmd(args []string) {
 	}
 
 	if err := windowctl.Focus(windowctl.Match{Title: *title, App: *app}); err != nil {
+		fmt.Fprintln(os.Stderr, "windowctl:", err)
+		os.Exit(1)
+	}
+}
+
+func resizeCmd(args []string) {
+	fs := flag.NewFlagSet("resize", flag.ExitOnError)
+	title := fs.String("title", "", "match by window title (case-insensitive substring)")
+	app := fs.String("app", "", "match by application name (case-insensitive)")
+	w := fs.Int("w", 0, "new width (required)")
+	h := fs.Int("h", 0, "new height (required)")
+	_ = fs.Parse(args)
+
+	if *title == "" && *app == "" {
+		fmt.Fprintln(os.Stderr, "windowctl resize: --title or --app is required")
+		os.Exit(2)
+	}
+	if *w <= 0 || *h <= 0 {
+		fmt.Fprintln(os.Stderr, "windowctl resize: --w and --h are required and must be > 0")
+		os.Exit(2)
+	}
+
+	if err := windowctl.Resize(windowctl.Match{Title: *title, App: *app}, *w, *h); err != nil {
 		fmt.Fprintln(os.Stderr, "windowctl:", err)
 		os.Exit(1)
 	}

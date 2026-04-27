@@ -20,6 +20,14 @@ type Monitor struct {
 	Width   int
 	Height  int
 	Primary bool
+	// Active is true when the OS cursor is currently over this
+	// monitor. Independent of Focused — the user can mouse over one
+	// display while typing into a window on another.
+	Active bool
+	// Focused is true when the frontmost (key) window's centroid
+	// falls on this monitor. The "where am I working" signal as
+	// opposed to Active's "where is my pointer".
+	Focused bool
 }
 
 type Rect struct {
