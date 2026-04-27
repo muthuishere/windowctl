@@ -26,6 +26,17 @@ tasks:
     cmds:
       - goreleaser release --snapshot --clean --skip=publish --verbose
 
+  local-install:
+    desc: "Build + symlink bin/windowctl → /usr/local/bin/windowctl for dev iteration. Each subsequent 'task build' is immediately live."
+    deps: [build]
+    cmds:
+      - bash ./scripts/local-install.sh
+
+  local-uninstall:
+    desc: "Remove the dev symlink at /usr/local/bin/windowctl (only if it points at this repo; safe to run even if absent)."
+    cmds:
+      - bash ./scripts/local-uninstall.sh
+
   smoke-darwin:
     desc: Run the macOS real-window smoke test (TextEdit via LaunchServices, no AppleScript)
     cmds:
