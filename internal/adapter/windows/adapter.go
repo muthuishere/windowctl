@@ -2,9 +2,9 @@
 
 // Package windows is the Windows platform adapter for windowctl.
 //
-// Implemented against user32.dll via golang.org/x/sys/windows. The os-spikes
-// tracer bullet covers list/move/focus; richer monitor enumeration is a
-// planned follow-up.
+// Implemented against user32.dll via golang.org/x/sys/windows. ListWindows
+// enumerates top-level windows via EnumWindows; ListMonitors enumerates
+// every attached display via EnumDisplayMonitors + GetMonitorInfoW.
 package windows
 
 import (
@@ -17,19 +17,41 @@ import (
 )
 
 var (
-	user32                 = windows.NewLazySystemDLL("user32.dll")
-	procEnumWindows        = user32.NewProc("EnumWindows")
-	procGetWindowTextW     = user32.NewProc("GetWindowTextW")
-	procGetWindowTextLenW  = user32.NewProc("GetWindowTextLengthW")
-	procIsWindowVisible    = user32.NewProc("IsWindowVisible")
-	procGetWindowRect      = user32.NewProc("GetWindowRect")
-	procMoveWindow         = user32.NewProc("MoveWindow")
-	procSetForegroundWnd   = user32.NewProc("SetForegroundWindow")
-	procGetWindowThreadPID = user32.NewProc("GetWindowThreadProcessId")
-	procGetSystemMetrics   = user32.NewProc("GetSystemMetrics")
+	user32                  = windows.NewLazySystemDLL("user32.dll")
+	procEnumWindows         = user32.NewProc("EnumWindows")
+	procGetWindowTextW      = user32.NewProc("GetWindowTextW")
+	procGetWindowTextLenW   = user32.NewProc("GetWindowTextLengthW")
+	procIsWindowVisible     = user32.NewProc("IsWindowVisible")
+	procGetWindowRect       = user32.NewProc("GetWindowRect")
+	procMoveWindow          = user32.NewProc("MoveWindow")
+	procSetForegroundWnd    = user32.NewProc("SetForegroundWindow")
+	procGetWindowThreadPID  = user32.NewProc("GetWindowThreadProcessId")
+	procEnumDisplayMonitors = user32.NewProc("EnumDisplayMonitors")
+	procGetMonitorInfoW     = user32.NewProc("GetMonitorInfoW")
 )
 
 type rect struct{ Left, Top, Right, Bottom int32 }
+
+// monitorInfo mirrors the Win32 MONITORINFO struct exactly:
+//
+//	typedef struct tagMONITORINFO {
+//	    DWORD cbSize;     // must be set to sizeof(MONITORINFO) = 40
+//	    RECT  rcMonitor;  // full display bounds (virtual-screen coords)
+//	    RECT  rcWork;     // work-area (excludes taskbar etc.)
+//	    DWORD dwFlags;    // bit 0 = MONITORINFOF_PRIMARY
+//	} MONITORINFO;
+//
+// Total size: 4 + 16 + 16 + 4 = 40 bytes. We use plain MONITORINFO
+// (not MONITORINFOEXW) because the spec only needs ID/X/Y/W/H/Primary —
+// the device-name field would be dead weight.
+type monitorInfo struct {
+	CbSize    uint32
+	RcMonitor rect
+	RcWork    rect
+	DwFlags   uint32
+}
+
+const monitorInfofPrimary uint32 = 1
 
 type Adapter struct{}
 
@@ -76,13 +98,42 @@ func (a *Adapter) ListWindows() ([]core.Window, error) {
 	return out, nil
 }
 
+// ListMonitors enumerates every attached display via Win32
+// EnumDisplayMonitors, then resolves each HMONITOR's bounds and
+// primary-flag with GetMonitorInfoW. IDs are sequential 0..N-1 in
+// enumeration order — same shape the darwin adapter returns so the
+// public package can treat all platforms uniformly.
 func (a *Adapter) ListMonitors() ([]core.Monitor, error) {
-	const SM_CXSCREEN, SM_CYSCREEN = 0, 1
-	w, _, _ := procGetSystemMetrics.Call(SM_CXSCREEN)
-	h, _, _ := procGetSystemMetrics.Call(SM_CYSCREEN)
-	return []core.Monitor{{
-		ID: 0, X: 0, Y: 0, Width: int(w), Height: int(h), Primary: true,
-	}}, nil
+	var out []core.Monitor
+	var enumErr error
+	cb := syscall.NewCallback(func(hmon, _ uintptr, _ *rect, _ uintptr) uintptr {
+		mi := monitorInfo{CbSize: uint32(unsafe.Sizeof(monitorInfo{}))}
+		ret, _, err := procGetMonitorInfoW.Call(hmon, uintptr(unsafe.Pointer(&mi)))
+		if ret == 0 {
+			enumErr = fmt.Errorf("GetMonitorInfoW: %w", err)
+			return 0 // stop enumeration on hard failure
+		}
+		out = append(out, core.Monitor{
+			ID:      len(out),
+			X:       int(mi.RcMonitor.Left),
+			Y:       int(mi.RcMonitor.Top),
+			Width:   int(mi.RcMonitor.Right - mi.RcMonitor.Left),
+			Height:  int(mi.RcMonitor.Bottom - mi.RcMonitor.Top),
+			Primary: mi.DwFlags&monitorInfofPrimary != 0,
+		})
+		return 1
+	})
+	ret, _, err := procEnumDisplayMonitors.Call(0, 0, cb, 0)
+	if ret == 0 {
+		if enumErr != nil {
+			return nil, enumErr
+		}
+		return nil, fmt.Errorf("EnumDisplayMonitors: %w", err)
+	}
+	if enumErr != nil {
+		return nil, enumErr
+	}
+	return out, nil
 }
 
 func (a *Adapter) Move(id string, b core.Rect) error {
@@ -117,6 +168,11 @@ func (a *Adapter) Focus(id string) error {
 // returns nil and the CLI prints a "not required" message based on
 // runtime.GOOS.
 func (a *Adapter) RequestAccessibility() error { return nil }
+
+// CheckAccessibility is the non-prompting sibling of RequestAccessibility.
+// AX is a macOS-only concept; on Windows there is nothing to check, so
+// we always report trusted=true.
+func (a *Adapter) CheckAccessibility() bool { return true }
 
 func parseHwnd(id string) (uintptr, error) {
 	var n uint64

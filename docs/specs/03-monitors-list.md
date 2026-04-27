@@ -22,6 +22,37 @@
 - **THEN** output is a JSON array of monitor objects with the same fields
   as the table view
 
+## ADDED Requirements
+
+### Requirement: Multi-display enumeration on every supported OS
+
+The adapter SHALL enumerate every attached physical display, not just
+the primary one, on macOS, Linux, and Windows. The previous Windows
+caveat ("primary only via `GetSystemMetrics`") that was flagged in
+`CLAUDE.md` is now closed: `internal/adapter/windows/adapter.go` uses
+`EnumDisplayMonitors` + `GetMonitorInfoW` (user32.dll) and assigns
+sequential IDs (0..N-1) in enumeration order, mirroring the darwin
+adapter's `wctl_collect_monitors` shape.
+
+#### Scenario: Windows reports every attached display
+
+- **GIVEN** a Windows host with two or more displays connected
+- **WHEN** the user runs `windowctl monitors list`
+- **THEN** the output contains one row per display (not just the primary)
+- **AND** exactly one row has `Primary=true` (the display whose
+  `MONITORINFO.dwFlags` includes `MONITORINFOF_PRIMARY = 0x1`)
+- **AND** each row's `X`, `Y`, `Width`, `Height` come from the
+  display's `rcMonitor` rectangle in virtual-screen coordinates
+
+#### Scenario: macOS reports every active display
+
+- **GIVEN** a macOS host with two or more displays connected
+- **WHEN** the user runs `windowctl monitors list`
+- **THEN** the output contains one row per active display
+  (`CGGetActiveDisplayList`)
+- **AND** the row whose display ID equals `CGMainDisplayID()` has
+  `Primary=true`
+
 ## Tasks
 
 | Task | Purpose |
