@@ -118,6 +118,14 @@ func (a *Adapter) Focus(id string) error {
 // prints a "not required" message based on runtime.GOOS.
 func (a *Adapter) RequestAccessibility() error { return nil }
 
+// CheckAccessibility is a no-op on Linux for the same reason
+// RequestAccessibility is — there's no macOS-style per-process AX
+// trust gate on X11. Returns true so callers that branch on the result
+// see the "no setup required" answer. The CLI's `permissions --status`
+// path on linux ignores this value and prints a platform-derived
+// "not required on linux" message regardless.
+func (a *Adapter) CheckAccessibility() bool { return true }
+
 func stripUnit(s string) string {
 	for i, r := range s {
 		if r < '0' || r > '9' {

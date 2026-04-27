@@ -35,4 +35,18 @@ type Adapter interface {
 	// process is not trusted. Returns nil on success or on platforms
 	// where no permission setup is required.
 	RequestAccessibility() error
+	// CheckAccessibility is the read-only sibling of
+	// RequestAccessibility. On macOS it inspects the current AX
+	// trust state via AXIsProcessTrustedWithOptions with
+	// kAXTrustedCheckOptionPrompt = false — never triggering the
+	// system dialog. On Linux and Windows it is a no-op that returns
+	// true (no comparable per-process trust gate exists on those
+	// platforms).
+	//
+	// The signature returns bool (not (bool, error)) deliberately:
+	// the underlying macOS call has no actionable failure channel,
+	// and any internal allocation failure inside the C helper
+	// collapses to the safe-failing answer (false / denied). See
+	// docs/specs/11-permissions-subcommand.md ADDED Requirement.
+	CheckAccessibility() bool
 }

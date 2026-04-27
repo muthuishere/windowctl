@@ -63,6 +63,25 @@ func requestAccessibilityWith(a Adapter) error {
 	return a.RequestAccessibility()
 }
 
+// CheckAccessibility is the read-only sibling of RequestAccessibility.
+// It returns the current AX trust state without triggering the macOS
+// system dialog — the contract that lets `windowctl permissions
+// --status` be a script-friendly detection path. See
+// docs/specs/11-permissions-subcommand.md ADDED Requirement.
+//
+// On macOS: calls AXIsProcessTrustedWithOptions with
+// kAXTrustedCheckOptionPrompt = false; returns true if the process is
+// currently trusted, false otherwise.
+//
+// On Linux and Windows: no-op that always returns true.
+func CheckAccessibility() bool {
+	return checkAccessibilityWith(defaultAdapter)
+}
+
+func checkAccessibilityWith(a Adapter) bool {
+	return a.CheckAccessibility()
+}
+
 // MoveZone moves the window matched by `match` into the given zone on the
 // resolved monitor. monitorID is optional: when nil, the monitor is
 // auto-resolved as the one containing the majority of the window's area

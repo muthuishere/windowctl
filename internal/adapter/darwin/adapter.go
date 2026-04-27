@@ -622,6 +622,21 @@ func (a *Adapter) RequestAccessibility() error {
 	return core.ErrAccessibilityDenied
 }
 
+// CheckAccessibility is the read-only sibling of RequestAccessibility:
+// it returns the current AX trust state without triggering the macOS
+// system dialog. Reuses the existing wctl_ax_check C helper, which
+// already passes kAXTrustedCheckOptionPrompt = false for the same
+// reason — that helper has been the internal pre-flight for
+// wctl_ax_set_bounds / wctl_ax_focus since slice 01. Exposing it via a
+// Go method (rather than adding a new wctl_ax_check_silent sibling) is
+// a deliberate choice: a second helper would be a verbatim duplicate of
+// wctl_ax_check, and the existing name + comment block already document
+// the prompt=false semantic. See docs/specs/11-permissions-subcommand.md
+// ADDED Requirement for the contract.
+func (a *Adapter) CheckAccessibility() bool {
+	return int(C.wctl_ax_check()) == 1
+}
+
 // parseCGWindowID matches the public Window.ID contract — a decimal
 // CGWindowID string. Returning a typed error here means callers see
 // the same shape Windows/Linux do for malformed IDs.

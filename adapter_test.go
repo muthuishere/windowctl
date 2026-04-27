@@ -18,6 +18,8 @@ type mockAdapter struct {
 	focusErr          error
 	requestAXErr      error
 	requestAXCalled   int
+	checkAXResult     bool
+	checkAXCalled     int
 }
 
 func (m *mockAdapter) ListWindows() ([]Window, error)  { return m.windows, m.listErr }
@@ -42,6 +44,10 @@ func (m *mockAdapter) Focus(id string) error {
 func (m *mockAdapter) RequestAccessibility() error {
 	m.requestAXCalled++
 	return m.requestAXErr
+}
+func (m *mockAdapter) CheckAccessibility() bool {
+	m.checkAXCalled++
+	return m.checkAXResult
 }
 
 func sampleWindows() []Window {
@@ -211,5 +217,44 @@ func TestRequestAccessibilitySurfacesDeniedSentinel(t *testing.T) {
 	err := requestAccessibilityWith(a)
 	if !errors.Is(err, ErrAccessibilityDenied) {
 		t.Fatalf("expected ErrAccessibilityDenied to propagate, got %v", err)
+	}
+}
+
+// TestCheckAccessibilityDelegatesToAdapter pins the contract that the
+// public CheckAccessibility() entry point is a thin pass-through to the
+// platform adapter. Per spec slice 11 ADDED Requirement, this is the
+// read-only sibling of RequestAccessibility — the `--status` flag uses
+// it so wrapper scripts can detect AX trust state without triggering
+// the macOS system prompt.
+func TestCheckAccessibilityDelegatesToAdapter(t *testing.T) {
+	a := &mockAdapter{checkAXResult: true}
+	got := checkAccessibilityWith(a)
+	if !got {
+		t.Fatalf("expected true from delegate when adapter returns true, got false")
+	}
+	if a.checkAXCalled != 1 {
+		t.Fatalf("expected adapter.CheckAccessibility to be called exactly once, got %d", a.checkAXCalled)
+	}
+}
+
+// TestCheckAccessibilitySurfacesDenied confirms the false path bubbles
+// up unchanged so the CLI can branch on it.
+func TestCheckAccessibilitySurfacesDenied(t *testing.T) {
+	a := &mockAdapter{checkAXResult: false}
+	if got := checkAccessibilityWith(a); got {
+		t.Fatalf("expected false from delegate when adapter returns false, got true")
+	}
+}
+
+// TestCheckAccessibilityDoesNotErrOnSignature is a compile-time pin: by
+// returning bool (not (bool, error)), CheckAccessibility states that the
+// underlying AXIsProcessTrustedWithOptions(prompt=false) call has no
+// failure channel callers can act on. If the signature ever drifts to
+// (bool, error), this test will stop compiling.
+func TestCheckAccessibilityDoesNotErrOnSignature(t *testing.T) {
+	a := &mockAdapter{checkAXResult: true}
+	var fn func(Adapter) bool = checkAccessibilityWith
+	if !fn(a) {
+		t.Fatal("expected true; this test exists for the compile-time signature pin")
 	}
 }
