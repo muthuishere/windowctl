@@ -607,6 +607,7 @@ import "C"
 
 import (
 	"fmt"
+	"time"
 	"unsafe"
 
 	"github.com/muthuishere/windowctl/internal/core"
@@ -741,9 +742,12 @@ func (a *Adapter) Move(id string, b core.Rect) error {
 	// against what we asked for. AX reports success even when the OS
 	// (or the app's minimum-size constraint) silently clamps the
 	// geometry — caller would otherwise see a "successful" move that
-	// landed somewhere else. Re-fetching via ListWindows keeps this
-	// pure Go (no new CGO surface) at the cost of one extra CG call.
-	actual, ok := findWindowBounds(a, id)
+	// landed somewhere else. We poll until bounds settle (the
+	// WindowServer commits AX size writes immediately but animates the
+	// position into a valid frame, so an immediate re-read returns a
+	// transient state where W/H is right but X/Y is still mid-animation
+	// — that's BUG-13).
+	actual, ok := settledWindowBounds(a, id, b)
 	if !ok {
 		// Window vanished between move and re-read — rare, but not
 		// worth failing over; the move itself reported success.
@@ -755,6 +759,37 @@ func (a *Adapter) Move(id string, b core.Rect) error {
 			actual.W, actual.H, actual.X, actual.Y)
 	}
 	return nil
+}
+
+// settledWindowBounds returns the window's bounds once they've stopped
+// changing, or once the deadline expires. Fast path (no extra delay):
+// if the first read already matches `requested` within tolerance, the
+// move landed cleanly and we return immediately. Slow path (clamped
+// or animating): poll every 40ms until two consecutive reads agree, or
+// 300ms total — whichever comes first. The slow-path cost is only
+// paid when the move actually disagrees with the request, so well-
+// behaved moves see no latency hit.
+func settledWindowBounds(a *Adapter, id string, requested core.Rect) (core.Rect, bool) {
+	actual, ok := findWindowBounds(a, id)
+	if !ok {
+		return core.Rect{}, false
+	}
+	if clampDelta(actual, requested) <= moveClampToleranceDarwin {
+		return actual, true
+	}
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		time.Sleep(40 * time.Millisecond)
+		next, ok := findWindowBounds(a, id)
+		if !ok {
+			return actual, true
+		}
+		if next == actual {
+			return actual, true
+		}
+		actual = next
+	}
+	return actual, true
 }
 
 // findWindowBounds re-reads the bounds for a CG window id by listing

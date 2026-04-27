@@ -10,6 +10,7 @@ package windows
 import (
 	"fmt"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/muthuishere/windowctl/internal/core"
@@ -190,24 +191,61 @@ func (a *Adapter) Move(id string, b core.Rect) error {
 	}
 	// Post-move sanity check: re-read the actual window rect and
 	// compare against the requested bounds. MoveWindow reports success
-	// even when the app refuses our size via WM_GETMINMAXINFO; the
-	// caller would otherwise see a "successful" move that landed
-	// somewhere else.
-	var r rect
-	if ret, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r))); ret != 0 {
-		actual := core.Rect{
+	// even when the app refuses our size via WM_GETMINMAXINFO or DWM
+	// animates the window into a clamped frame. Poll until bounds
+	// settle (size lands first; X/Y can lag while DWM animates) — same
+	// problem darwin had with BUG-13.
+	actual, ok := settledHwndBounds(hwnd, b)
+	if !ok {
+		return nil
+	}
+	if clampDelta(actual, b) > moveClampToleranceWindows {
+		return fmt.Errorf("requested %dx%d at (%d,%d), OS clamped to %dx%d at (%d,%d) (likely a minimum-window-size constraint)",
+			b.W, b.H, b.X, b.Y,
+			actual.W, actual.H, actual.X, actual.Y)
+	}
+	return nil
+}
+
+// settledHwndBounds reads the hwnd's window rect, returning early if
+// the first read already matches `requested` within tolerance, and
+// otherwise polling every 40ms until two consecutive reads agree or
+// 300ms total elapses. Same shape as darwin's settledWindowBounds —
+// see the comment there for the rationale.
+func settledHwndBounds(hwnd uintptr, requested core.Rect) (core.Rect, bool) {
+	read := func() (core.Rect, bool) {
+		var r rect
+		ret, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
+		if ret == 0 {
+			return core.Rect{}, false
+		}
+		return core.Rect{
 			X: int(r.Left),
 			Y: int(r.Top),
 			W: int(r.Right - r.Left),
 			H: int(r.Bottom - r.Top),
-		}
-		if clampDelta(actual, b) > moveClampToleranceWindows {
-			return fmt.Errorf("requested %dx%d at (%d,%d), OS clamped to %dx%d at (%d,%d) (likely a minimum-window-size constraint)",
-				b.W, b.H, b.X, b.Y,
-				actual.W, actual.H, actual.X, actual.Y)
-		}
+		}, true
 	}
-	return nil
+	actual, ok := read()
+	if !ok {
+		return core.Rect{}, false
+	}
+	if clampDelta(actual, requested) <= moveClampToleranceWindows {
+		return actual, true
+	}
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		time.Sleep(40 * time.Millisecond)
+		next, ok := read()
+		if !ok {
+			return actual, true
+		}
+		if next == actual {
+			return actual, true
+		}
+		actual = next
+	}
+	return actual, true
 }
 
 // clampDelta returns the largest per-axis absolute difference between
