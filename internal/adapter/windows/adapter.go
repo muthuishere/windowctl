@@ -171,6 +171,14 @@ func stampMonitorByPoint(ms []core.Monitor, x, y int, set func(*core.Monitor)) {
 	}
 }
 
+// moveClampToleranceWindows is the per-axis pixel slack we tolerate
+// between requested and actual post-move bounds before reporting an
+// OS-imposed clamp. DWM frame insets and shadow accounting cause small
+// drift on Win10/11 even when the move was honored verbatim; 10px
+// absorbs that without hiding real minimum-size clamps (apps like
+// Chrome refuse < ~500px).
+const moveClampToleranceWindows = 10
+
 func (a *Adapter) Move(id string, b core.Rect) error {
 	hwnd, err := parseHwnd(id)
 	if err != nil {
@@ -180,7 +188,50 @@ func (a *Adapter) Move(id string, b core.Rect) error {
 	if ret == 0 {
 		return fmt.Errorf("MoveWindow %s: %w", id, err)
 	}
+	// Post-move sanity check: re-read the actual window rect and
+	// compare against the requested bounds. MoveWindow reports success
+	// even when the app refuses our size via WM_GETMINMAXINFO; the
+	// caller would otherwise see a "successful" move that landed
+	// somewhere else.
+	var r rect
+	if ret, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r))); ret != 0 {
+		actual := core.Rect{
+			X: int(r.Left),
+			Y: int(r.Top),
+			W: int(r.Right - r.Left),
+			H: int(r.Bottom - r.Top),
+		}
+		if clampDelta(actual, b) > moveClampToleranceWindows {
+			return fmt.Errorf("requested %dx%d at (%d,%d), OS clamped to %dx%d at (%d,%d) (likely a minimum-window-size constraint)",
+				b.W, b.H, b.X, b.Y,
+				actual.W, actual.H, actual.X, actual.Y)
+		}
+	}
 	return nil
+}
+
+// clampDelta returns the largest per-axis absolute difference between
+// the actual and requested rects. Used to decide whether a post-move
+// re-read indicates the OS clamped our request.
+func clampDelta(actual, requested core.Rect) int {
+	d := abs(actual.X - requested.X)
+	if v := abs(actual.Y - requested.Y); v > d {
+		d = v
+	}
+	if v := abs(actual.W - requested.W); v > d {
+		d = v
+	}
+	if v := abs(actual.H - requested.H); v > d {
+		d = v
+	}
+	return d
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func (a *Adapter) Focus(id string) error {

@@ -50,7 +50,7 @@ Usage:
   windowctl move (--title <s> | --app <s>) [--monitor <n>] (--zone <z> | --x <n> --y <n> --w <n> --h <n>)
   windowctl focus (--title <s> | --app <s>)
   windowctl resize (--title <s> | --app <s>) --w <n> --h <n>
-  windowctl permissions [--status]`)
+  windowctl permissions [--status] [--json]`)
 }
 
 func windowsCmd(args []string) {
@@ -64,6 +64,11 @@ func windowsCmd(args []string) {
 	asJSON := fs.Bool("json", false, "emit JSON instead of a table")
 	_ = fs.Parse(args[1:])
 
+	if err := rejectEmptyFilterFlags(fs, title, app); err != nil {
+		fmt.Fprintln(os.Stderr, "windowctl windows list:", err)
+		os.Exit(2)
+	}
+
 	ws, err := windowctl.ListWindows(windowctl.Filter{Title: *title, App: *app})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "windowctl:", err)
@@ -74,6 +79,75 @@ func windowsCmd(args []string) {
 		return
 	}
 	printWindowsTable(os.Stdout, ws)
+}
+
+// rejectEmptyFilterFlags hardens the "$VAR was unset" footgun: an
+// explicitly-passed --title="" or --app="" must be a hard error rather
+// than silently equivalent to "no filter set". Returns nil when neither
+// flag was passed empty (the caller decides whether at least one is
+// required).
+func rejectEmptyFilterFlags(fs *flag.FlagSet, title, app *string) error {
+	var bad string
+	fs.Visit(func(f *flag.Flag) {
+		if bad != "" {
+			return
+		}
+		switch f.Name {
+		case "title":
+			if *title == "" {
+				bad = "--title cannot be empty"
+			}
+		case "app":
+			if *app == "" {
+				bad = "--app cannot be empty"
+			}
+		}
+	})
+	if bad != "" {
+		return errors.New(bad)
+	}
+	return nil
+}
+
+// monitorIDFromFlag reads the --monitor flag respecting "explicitly
+// passed" semantics. Returns (nil, nil) when --monitor was not passed
+// (caller should auto-resolve), (ptr, nil) when it was passed with a
+// valid ID >= 1, or (nil, err) when it was passed with a value < 1
+// (the explicit-bad-input case BUG-5 was about).
+func monitorIDFromFlag(fs *flag.FlagSet, monitor *int) (*int, error) {
+	passed := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "monitor" {
+			passed = true
+		}
+	})
+	if !passed {
+		return nil, nil
+	}
+	if *monitor < 1 {
+		return nil, errors.New("--monitor must be >= 1 (use 1, 2, 3, ...; omit to auto-resolve)")
+	}
+	return monitor, nil
+}
+
+// formatNoMatchFilter wraps core.ErrNoMatch with the actual filter
+// values the user passed so the diagnostic loop is one round-trip
+// shorter (BUG-12). Both filters are echoed when both were set; the
+// caller should only invoke this when errors.Is(err, ErrNoMatch).
+func formatNoMatchFilter(title, app string) string {
+	switch {
+	case title != "" && app != "":
+		return fmt.Sprintf("no window matched filter --title=%q --app=%q", title, app)
+	case app != "":
+		return fmt.Sprintf("no window matched filter --app=%q", app)
+	case title != "":
+		return fmt.Sprintf("no window matched filter --title=%q", title)
+	default:
+		// Defensive — every action subcommand requires at least one
+		// filter, so we shouldn't reach here. Fall back to the
+		// sentinel's bare message.
+		return windowctl.ErrNoMatch.Error()
+	}
 }
 
 func monitorsCmd(args []string) {
@@ -129,7 +203,7 @@ func moveCmd(args []string) {
 	fs := flag.NewFlagSet("move", flag.ExitOnError)
 	title := fs.String("title", "", "match by window title (case-insensitive substring)")
 	app := fs.String("app", "", "match by application name (case-insensitive)")
-	monitor := fs.Int("monitor", -1, "target monitor ID (omit to auto-resolve)")
+	monitor := fs.Int("monitor", 0, "target monitor ID (>=1; omit to auto-resolve)")
 	zone := fs.String("zone", "", "target zone (1A,1B,2A..2D or N:M)")
 	x := fs.Int("x", 0, "target x (with --monitor: relative; otherwise: absolute)")
 	y := fs.Int("y", 0, "target y (with --monitor: relative; otherwise: absolute)")
@@ -137,6 +211,10 @@ func moveCmd(args []string) {
 	h := fs.Int("h", 0, "target height")
 	_ = fs.Parse(args)
 
+	if err := rejectEmptyFilterFlags(fs, title, app); err != nil {
+		fmt.Fprintln(os.Stderr, "windowctl move:", err)
+		os.Exit(2)
+	}
 	if *title == "" && *app == "" {
 		fmt.Fprintln(os.Stderr, "windowctl move: --title or --app is required")
 		os.Exit(2)
@@ -159,20 +237,34 @@ func moveCmd(args []string) {
 		os.Exit(2)
 	}
 
-	var monitorID *int
-	if *monitor >= 0 {
-		monitorID = monitor
+	if *zone == "" {
+		// Coord-mode: w/h must be > 0 just like resize requires.
+		// Otherwise --w 0 silently accepts a OS-clamped geometry that
+		// neither errors nor honors the requested rect.
+		if *w <= 0 || *h <= 0 {
+			fmt.Fprintln(os.Stderr, "windowctl move: --w and --h must be > 0 in coord mode")
+			os.Exit(2)
+		}
+	}
+
+	monitorID, err := monitorIDFromFlag(fs, monitor)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "windowctl move:", err)
+		os.Exit(2)
 	}
 
 	match := windowctl.Match{Title: *title, App: *app}
-	var err error
 	if *zone != "" {
 		err = windowctl.MoveZone(match, monitorID, *zone)
 	} else {
 		err = windowctl.MoveCoords(match, monitorID, windowctl.Rect{X: *x, Y: *y, W: *w, H: *h})
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "windowctl:", err)
+		if errors.Is(err, windowctl.ErrNoMatch) {
+			fmt.Fprintln(os.Stderr, "windowctl:", formatNoMatchFilter(*title, *app))
+		} else {
+			fmt.Fprintln(os.Stderr, "windowctl:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -183,13 +275,21 @@ func focusCmd(args []string) {
 	app := fs.String("app", "", "match by application name (case-insensitive)")
 	_ = fs.Parse(args)
 
+	if err := rejectEmptyFilterFlags(fs, title, app); err != nil {
+		fmt.Fprintln(os.Stderr, "windowctl focus:", err)
+		os.Exit(2)
+	}
 	if *title == "" && *app == "" {
 		fmt.Fprintln(os.Stderr, "windowctl focus: --title or --app is required")
 		os.Exit(2)
 	}
 
 	if err := windowctl.Focus(windowctl.Match{Title: *title, App: *app}); err != nil {
-		fmt.Fprintln(os.Stderr, "windowctl:", err)
+		if errors.Is(err, windowctl.ErrNoMatch) {
+			fmt.Fprintln(os.Stderr, "windowctl:", formatNoMatchFilter(*title, *app))
+		} else {
+			fmt.Fprintln(os.Stderr, "windowctl:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -202,6 +302,10 @@ func resizeCmd(args []string) {
 	h := fs.Int("h", 0, "new height (required)")
 	_ = fs.Parse(args)
 
+	if err := rejectEmptyFilterFlags(fs, title, app); err != nil {
+		fmt.Fprintln(os.Stderr, "windowctl resize:", err)
+		os.Exit(2)
+	}
 	if *title == "" && *app == "" {
 		fmt.Fprintln(os.Stderr, "windowctl resize: --title or --app is required")
 		os.Exit(2)
@@ -212,7 +316,11 @@ func resizeCmd(args []string) {
 	}
 
 	if err := windowctl.Resize(windowctl.Match{Title: *title, App: *app}, *w, *h); err != nil {
-		fmt.Fprintln(os.Stderr, "windowctl:", err)
+		if errors.Is(err, windowctl.ErrNoMatch) {
+			fmt.Fprintln(os.Stderr, "windowctl:", formatNoMatchFilter(*title, *app))
+		} else {
+			fmt.Fprintln(os.Stderr, "windowctl:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -228,8 +336,13 @@ func resizeCmd(args []string) {
 func permissionsCmd(args []string) {
 	fs := flag.NewFlagSet("permissions", flag.ExitOnError)
 	status := fs.Bool("status", false, "report current Accessibility trust state without triggering the macOS system prompt (read-only)")
+	asJSON := fs.Bool("json", false, "emit JSON instead of human-readable text (only valid with --status)")
 	_ = fs.Parse(args)
-	rc := runPermissions(os.Stdout, os.Stderr, runtime.GOOS, *status, windowctl.RequestAccessibility, windowctl.CheckAccessibility)
+	if *asJSON && !*status {
+		fmt.Fprintln(os.Stderr, "windowctl permissions: --json requires --status")
+		os.Exit(2)
+	}
+	rc := runPermissions(os.Stdout, os.Stderr, runtime.GOOS, *status, *asJSON, windowctl.RequestAccessibility, windowctl.CheckAccessibility)
 	if rc != 0 {
 		os.Exit(rc)
 	}
@@ -253,13 +366,28 @@ func permissionsCmd(args []string) {
 //     stderr + non-zero exit. On linux / windows: invokes requestFn
 //     for symmetry but ignores the result; prints "not required on
 //     {os}" and returns 0.
-func runPermissions(stdout, stderr io.Writer, goos string, status bool, requestFn func() error, checkFn func() bool) int {
+func runPermissions(stdout, stderr io.Writer, goos string, status, asJSON bool, requestFn func() error, checkFn func() bool) int {
 	if status {
 		if goos != "darwin" {
+			if asJSON {
+				// Non-darwin trust is implicit (no per-process AX
+				// gate). Emit `trusted: true` so script consumers
+				// don't have to special-case the platform.
+				_ = json.NewEncoder(stdout).Encode(map[string]bool{"trusted": true})
+				return 0
+			}
 			fmt.Fprintf(stdout, "Accessibility permission: not required on %s\n", goos)
 			return 0
 		}
-		if checkFn() {
+		trusted := checkFn()
+		if asJSON {
+			// --status is a read-only state inspection: both
+			// granted and denied are valid answers, exit 0 either
+			// way. Wrapper scripts branch on .trusted.
+			_ = json.NewEncoder(stdout).Encode(map[string]bool{"trusted": trusted})
+			return 0
+		}
+		if trusted {
 			fmt.Fprintln(stdout, "Accessibility permission: granted")
 			return 0
 		}

@@ -42,8 +42,9 @@ Download the appropriate binary for your platform from the [Releases](../../rele
 Move and Focus on macOS require Accessibility (AX) permission for the parent process (your shell, your editor, etc.). The first call from a new parent prompts you in System Settings → Privacy & Security → Accessibility.
 
 ```sh
-windowctl permissions          # trigger the AX prompt (first time only)
-windowctl permissions --status # check current trust without prompting
+windowctl permissions                 # trigger the AX prompt (first time only)
+windowctl permissions --status        # human-readable: "granted" / "denied"
+windowctl permissions --status --json # → {"trusted": true|false} (exit 0 either way)
 ```
 
 `windows list` and `monitors list` work without AX. Only Move/Focus/Resize need it.
@@ -57,6 +58,24 @@ windowctl windows list
 windowctl windows list --title "chrome"
 windowctl windows list --app "Firefox" --json
 ```
+
+JSON shape (per window):
+
+```json
+{
+  "ID": "227",
+  "Title": "Reqsume - AI Resume Builder",
+  "App": "Google Chrome",
+  "PID": 4356,
+  "Monitor": 2,
+  "Focused": true,
+  "Bounds": { "X": 1920, "Y": 25, "Width": 1920, "Height": 1055 }
+}
+```
+
+- **`Monitor`** is the **1-indexed** ID of the display containing the window's centroid (matches `monitors list`). `0` means the window is off every display (off-screen / hidden).
+- **`Focused`** is `true` for the frontmost window on the focused monitor — useful for "operate on whatever I'm looking at right now" scripts.
+- **`Bounds`** uses `Width`/`Height` (not `W`/`H`) — same shape as `monitors list`.
 
 ### List monitors
 
@@ -92,6 +111,14 @@ windowctl move --title "chrome" --x 0 --y 0 --w 960 --h 1080
 
 # Monitor-relative coordinates (--x/--y relative to monitor 2's origin)
 windowctl move --app "Code" --monitor 2 --x 100 --y 100 --w 800 --h 600
+```
+
+`--monitor` is **1-indexed** (use `1`, `2`, `3`, ...). Omit to auto-resolve to the monitor containing the matched window. `--w` and `--h` must be `> 0` in coord mode.
+
+When the OS clamps a move (e.g. Chrome refuses widths smaller than ~500px, or a window resists leaving the menu-bar inset), the call exits non-zero with the actual landed bounds:
+
+```
+windowctl: requested 512x640 at (3840,30), OS clamped to 576x615 at (3840,55) (likely a minimum-window-size constraint)
 ```
 
 ### Resize a window

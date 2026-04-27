@@ -96,6 +96,95 @@ func TestListWindowsReturnsAllWhenNoFilter(t *testing.T) {
 	}
 }
 
+// TestListWindowsStampsMonitorByCentroid covers BUG-1: each window's
+// Monitor field is stamped from the public layer using the same
+// 1-indexed IDs that monitors list reports. A window whose centroid
+// lies off every monitor must be stamped 0 (the documented "off-screen
+// / on no monitor" sentinel).
+func TestListWindowsStampsMonitorByCentroid(t *testing.T) {
+	a := &mockAdapter{
+		// Two windows: one with centroid on monitor 2, one off-screen.
+		// Adapter returns id=99 to prove the public layer ignores it
+		// and re-IDs via sortMonitors before stamping.
+		windows: []Window{
+			// centroid (1920+50+400, 0+50+300) = (2370, 350) → monitor 2
+			{ID: "a", Title: "right", App: "X", Bounds: Rect{X: 1970, Y: 50, W: 800, H: 600}},
+			// centroid is way off-screen → 0
+			{ID: "b", Title: "ghost", App: "X", Bounds: Rect{X: -5000, Y: -5000, W: 100, H: 100}},
+		},
+		monitors: []Monitor{
+			{ID: 99, X: 0, Y: 0, Width: 1920, Height: 1080, Primary: true},
+			{ID: 99, X: 1920, Y: 0, Width: 1920, Height: 1080},
+		},
+	}
+	out, err := listWindowsWith(a, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out[0].Monitor; got != 2 {
+		t.Errorf("window on monitor 2: got Monitor=%d, want 2", got)
+	}
+	if got := out[1].Monitor; got != 0 {
+		t.Errorf("off-screen window: got Monitor=%d, want 0 (off-screen sentinel)", got)
+	}
+}
+
+// TestListWindowsStampsFocused covers BUG-9: the first window (in
+// adapter z-order) whose centroid lies on the focused monitor is
+// flagged Focused=true, and no other window is. Stamping happens
+// before applyFilter so the caller's filter cannot promote a
+// non-frontmost window to "focused".
+func TestListWindowsStampsFocused(t *testing.T) {
+	a := &mockAdapter{
+		// z-order top→bottom: w1 (mon 1, not focused), w2 (mon 2, FOCUSED),
+		// w3 (mon 2, behind w2). Expect only w2 to be flagged.
+		windows: []Window{
+			{ID: "w1", Title: "front-left", App: "X", Bounds: Rect{X: 100, Y: 100, W: 800, H: 600}},
+			{ID: "w2", Title: "front-right", App: "X", Bounds: Rect{X: 2000, Y: 100, W: 800, H: 600}},
+			{ID: "w3", Title: "behind-right", App: "X", Bounds: Rect{X: 2100, Y: 200, W: 800, H: 600}},
+		},
+		monitors: []Monitor{
+			{ID: 1, X: 0, Y: 0, Width: 1920, Height: 1080, Primary: true},
+			{ID: 2, X: 1920, Y: 0, Width: 1920, Height: 1080, Focused: true},
+		},
+	}
+	out, err := listWindowsWith(a, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Focused {
+		t.Errorf("w1 (left monitor) must not be Focused")
+	}
+	if !out[1].Focused {
+		t.Errorf("w2 (frontmost on focused monitor) must be Focused")
+	}
+	if out[2].Focused {
+		t.Errorf("w3 (behind w2 on same monitor) must not be Focused")
+	}
+}
+
+// TestListWindowsFocusedNoOpWhenNoMonitorFocused guards the linux path
+// (and other adapters that don't yet stamp Monitor.Focused): if no
+// monitor is flagged Focused, no window is either — we don't
+// arbitrarily pick the first listed window.
+func TestListWindowsFocusedNoOpWhenNoMonitorFocused(t *testing.T) {
+	a := &mockAdapter{
+		windows: []Window{
+			{ID: "w1", Title: "x", App: "X", Bounds: Rect{X: 100, Y: 100, W: 800, H: 600}},
+		},
+		monitors: []Monitor{
+			{ID: 1, X: 0, Y: 0, Width: 1920, Height: 1080, Primary: true},
+		},
+	}
+	out, err := listWindowsWith(a, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Focused {
+		t.Errorf("Focused must remain false when no monitor is flagged Focused")
+	}
+}
+
 func TestMoveDelegatesToAdapter(t *testing.T) {
 	a := &mockAdapter{windows: sampleWindows()}
 	if err := moveWith(a, Match{Title: "chrome"}, Target{Bounds: Rect{X: 10, Y: 20, W: 100, H: 200}}); err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"flag"
 	"strings"
 	"testing"
 
@@ -110,7 +111,7 @@ func (s *requestStub) fn() error {
 // "granted" line to stdout and exits 0. Per spec slice 11.
 func TestRunPermissionsDarwinGranted(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	rc := runPermissions(&stdout, &stderr, "darwin", false, func() error { return nil }, func() bool { return true })
+	rc := runPermissions(&stdout, &stderr, "darwin", false, false, func() error { return nil }, func() bool { return true })
 	if rc != 0 {
 		t.Fatalf("expected exit 0 on AX granted, got %d (stderr=%q)", rc, stderr.String())
 	}
@@ -125,7 +126,7 @@ func TestRunPermissionsDarwinGranted(t *testing.T) {
 // user has the manual route as a fallback.
 func TestRunPermissionsDarwinDenied(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	rc := runPermissions(&stdout, &stderr, "darwin", false, func() error {
+	rc := runPermissions(&stdout, &stderr, "darwin", false, false, func() error {
 		return windowctl.ErrAccessibilityDenied
 	}, func() bool { return false })
 	if rc == 0 {
@@ -140,7 +141,7 @@ func TestRunPermissionsDarwinDenied(t *testing.T) {
 // prints a "not required" line and exits 0. Same for windows below.
 func TestRunPermissionsLinuxIsNoOp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	rc := runPermissions(&stdout, &stderr, "linux", false, func() error { return nil }, func() bool { return true })
+	rc := runPermissions(&stdout, &stderr, "linux", false, false, func() error { return nil }, func() bool { return true })
 	if rc != 0 {
 		t.Fatalf("expected exit 0 on linux no-op, got %d", rc)
 	}
@@ -151,7 +152,7 @@ func TestRunPermissionsLinuxIsNoOp(t *testing.T) {
 
 func TestRunPermissionsWindowsIsNoOp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	rc := runPermissions(&stdout, &stderr, "windows", false, func() error { return nil }, func() bool { return true })
+	rc := runPermissions(&stdout, &stderr, "windows", false, false, func() error { return nil }, func() bool { return true })
 	if rc != 0 {
 		t.Fatalf("expected exit 0 on windows no-op, got %d", rc)
 	}
@@ -167,7 +168,7 @@ func TestRunPermissionsWindowsIsNoOp(t *testing.T) {
 func TestRunPermissionsUnexpectedError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	boom := errors.New("ax check exploded")
-	rc := runPermissions(&stdout, &stderr, "darwin", false, func() error { return boom }, func() bool { return false })
+	rc := runPermissions(&stdout, &stderr, "darwin", false, false, func() error { return boom }, func() bool { return false })
 	if rc == 0 {
 		t.Fatalf("expected non-zero exit on unexpected error, got 0")
 	}
@@ -183,7 +184,7 @@ func TestRunPermissionsStatusDarwinGranted(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	req := &requestStub{}
 	chk := &checkStub{result: true}
-	rc := runPermissions(&stdout, &stderr, "darwin", true, req.fn, chk.fn)
+	rc := runPermissions(&stdout, &stderr, "darwin", true, false, req.fn, chk.fn)
 	if rc != 0 {
 		t.Fatalf("expected exit 0 on AX granted, got %d (stderr=%q)", rc, stderr.String())
 	}
@@ -206,7 +207,7 @@ func TestRunPermissionsStatusDarwinDenied(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	req := &requestStub{}
 	chk := &checkStub{result: false}
-	rc := runPermissions(&stdout, &stderr, "darwin", true, req.fn, chk.fn)
+	rc := runPermissions(&stdout, &stderr, "darwin", true, false, req.fn, chk.fn)
 	if rc == 0 {
 		t.Fatalf("expected non-zero exit on AX denied, got 0 (stdout=%q)", stdout.String())
 	}
@@ -234,7 +235,7 @@ func TestRunPermissionsStatusLinuxIsNoOp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	req := &requestStub{}
 	chk := &checkStub{result: true}
-	rc := runPermissions(&stdout, &stderr, "linux", true, req.fn, chk.fn)
+	rc := runPermissions(&stdout, &stderr, "linux", true, false, req.fn, chk.fn)
 	if rc != 0 {
 		t.Fatalf("expected exit 0 on linux --status, got %d", rc)
 	}
@@ -251,7 +252,7 @@ func TestRunPermissionsStatusWindowsIsNoOp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	req := &requestStub{}
 	chk := &checkStub{result: true}
-	rc := runPermissions(&stdout, &stderr, "windows", true, req.fn, chk.fn)
+	rc := runPermissions(&stdout, &stderr, "windows", true, false, req.fn, chk.fn)
 	if rc != 0 {
 		t.Fatalf("expected exit 0 on windows --status, got %d", rc)
 	}
@@ -270,7 +271,7 @@ func TestRunPermissionsNoStatusDarwinDoesNotCallCheck(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	req := &requestStub{}
 	chk := &checkStub{result: true}
-	rc := runPermissions(&stdout, &stderr, "darwin", false, req.fn, chk.fn)
+	rc := runPermissions(&stdout, &stderr, "darwin", false, false, req.fn, chk.fn)
 	if rc != 0 {
 		t.Fatalf("expected exit 0 on AX granted (no --status), got %d", rc)
 	}
@@ -279,5 +280,198 @@ func TestRunPermissionsNoStatusDarwinDoesNotCallCheck(t *testing.T) {
 	}
 	if chk.called != 0 {
 		t.Fatalf("no-status path MUST NOT call CheckAccessibility; got %d", chk.called)
+	}
+}
+
+// parseFilterFlags is a tiny harness used by the BUG-3 / BUG-5 tests:
+// it sets up a flag.FlagSet shaped like the action subcommands and
+// returns it post-Parse so the validation helpers can be exercised in
+// isolation (the real subcommands call os.Exit on bad input, so we
+// can't drive them end-to-end from a unit test).
+func parseFilterFlags(t *testing.T, args []string) (*flag.FlagSet, *string, *string, *int) {
+	t.Helper()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(&bytes.Buffer{}) // swallow flag's own usage output
+	title := fs.String("title", "", "")
+	app := fs.String("app", "", "")
+	monitor := fs.Int("monitor", 0, "")
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("flag parse failed: %v", err)
+	}
+	return fs, title, app, monitor
+}
+
+// TestRejectEmptyFilterFlagsExplicitTitleEmpty pins BUG-3: passing
+// --title "" explicitly (typically from an unset shell variable like
+// --title "$VAR") MUST be a hard error rather than silently
+// equivalent to "no filter set".
+func TestRejectEmptyFilterFlagsExplicitTitleEmpty(t *testing.T) {
+	fs, title, app, _ := parseFilterFlags(t, []string{"--title", ""})
+	err := rejectEmptyFilterFlags(fs, title, app)
+	if err == nil || !strings.Contains(err.Error(), "--title cannot be empty") {
+		t.Fatalf("expected --title cannot be empty error, got %v", err)
+	}
+}
+
+func TestRejectEmptyFilterFlagsExplicitAppEmpty(t *testing.T) {
+	fs, title, app, _ := parseFilterFlags(t, []string{"--app", ""})
+	err := rejectEmptyFilterFlags(fs, title, app)
+	if err == nil || !strings.Contains(err.Error(), "--app cannot be empty") {
+		t.Fatalf("expected --app cannot be empty error, got %v", err)
+	}
+}
+
+// TestRejectEmptyFilterFlagsOmittedIsOK confirms the symmetric
+// guarantee: when neither flag is passed, the helper returns nil so
+// the caller's "at least one of --title / --app required" check still
+// runs (rather than this helper masking it).
+func TestRejectEmptyFilterFlagsOmittedIsOK(t *testing.T) {
+	fs, title, app, _ := parseFilterFlags(t, []string{})
+	if err := rejectEmptyFilterFlags(fs, title, app); err != nil {
+		t.Fatalf("expected nil for omitted flags, got %v", err)
+	}
+}
+
+func TestRejectEmptyFilterFlagsNonEmptyValueIsOK(t *testing.T) {
+	fs, title, app, _ := parseFilterFlags(t, []string{"--title", "Chrome"})
+	if err := rejectEmptyFilterFlags(fs, title, app); err != nil {
+		t.Fatalf("expected nil for non-empty title, got %v", err)
+	}
+}
+
+// TestMonitorIDFromFlagOmittedReturnsNil pins BUG-5: when --monitor
+// is not passed at all, the helper returns nil so the caller
+// auto-resolves.
+func TestMonitorIDFromFlagOmittedReturnsNil(t *testing.T) {
+	fs, _, _, monitor := parseFilterFlags(t, []string{})
+	id, err := monitorIDFromFlag(fs, monitor)
+	if err != nil {
+		t.Fatalf("unexpected error for omitted --monitor: %v", err)
+	}
+	if id != nil {
+		t.Fatalf("expected nil ID for omitted --monitor, got %d", *id)
+	}
+}
+
+// TestMonitorIDFromFlagNegativeIsRejected pins BUG-5: --monitor -1
+// passed explicitly used to be silently treated as "auto-resolve"
+// because -1 was the flag's sentinel default. Now any value < 1 is a
+// hard error.
+func TestMonitorIDFromFlagNegativeIsRejected(t *testing.T) {
+	fs, _, _, monitor := parseFilterFlags(t, []string{"--monitor", "-1"})
+	id, err := monitorIDFromFlag(fs, monitor)
+	if err == nil {
+		t.Fatalf("expected error for --monitor -1, got id=%v", id)
+	}
+	if !strings.Contains(err.Error(), ">= 1") {
+		t.Fatalf("expected error to explain >=1 requirement, got %q", err.Error())
+	}
+}
+
+func TestMonitorIDFromFlagZeroIsRejected(t *testing.T) {
+	fs, _, _, monitor := parseFilterFlags(t, []string{"--monitor", "0"})
+	if _, err := monitorIDFromFlag(fs, monitor); err == nil {
+		t.Fatalf("expected error for --monitor 0")
+	}
+}
+
+func TestMonitorIDFromFlagValidIsReturned(t *testing.T) {
+	fs, _, _, monitor := parseFilterFlags(t, []string{"--monitor", "2"})
+	id, err := monitorIDFromFlag(fs, monitor)
+	if err != nil {
+		t.Fatalf("unexpected error for --monitor 2: %v", err)
+	}
+	if id == nil || *id != 2 {
+		t.Fatalf("expected id=2, got %v", id)
+	}
+}
+
+// TestFormatNoMatchFilterTitleOnly / AppOnly / Both pin BUG-12: the
+// "no window matched" stderr line MUST echo the filter values so
+// users can see which input failed without re-running with -v.
+func TestFormatNoMatchFilterTitleOnly(t *testing.T) {
+	got := formatNoMatchFilter("Inbox", "")
+	if !strings.Contains(got, `--title="Inbox"`) {
+		t.Fatalf("expected title in error, got %q", got)
+	}
+}
+
+func TestFormatNoMatchFilterAppOnly(t *testing.T) {
+	got := formatNoMatchFilter("", "Cromne")
+	if !strings.Contains(got, `--app="Cromne"`) {
+		t.Fatalf("expected app in error, got %q", got)
+	}
+}
+
+func TestFormatNoMatchFilterBoth(t *testing.T) {
+	got := formatNoMatchFilter("Inbox", "Google Chrome")
+	if !strings.Contains(got, `--title="Inbox"`) || !strings.Contains(got, `--app="Google Chrome"`) {
+		t.Fatalf("expected both filters in error, got %q", got)
+	}
+}
+
+// TestRunPermissionsStatusJSONGranted pins BUG-11: --status --json
+// emits {"trusted": true} on stdout when AX is granted, exit 0.
+func TestRunPermissionsStatusJSONGranted(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rc := runPermissions(&stdout, &stderr, "darwin", true, true, func() error { return nil }, func() bool { return true })
+	if rc != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%q)", rc, stderr.String())
+	}
+	var got map[string]bool
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got["trusted"] != true {
+		t.Fatalf(`expected {"trusted": true}, got %v`, got)
+	}
+}
+
+// TestRunPermissionsStatusJSONDenied pins BUG-11: --status --json
+// emits {"trusted": false} on stdout when AX is denied, exit 0
+// (read-only state inspection — both states are valid).
+func TestRunPermissionsStatusJSONDenied(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rc := runPermissions(&stdout, &stderr, "darwin", true, true, func() error { return nil }, func() bool { return false })
+	if rc != 0 {
+		t.Fatalf("expected exit 0 even when denied (read-only), got %d (stderr=%q)", rc, stderr.String())
+	}
+	var got map[string]bool
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got["trusted"] != false {
+		t.Fatalf(`expected {"trusted": false}, got %v`, got)
+	}
+}
+
+// TestRunPermissionsStatusJSONLinux pins the platform-symmetric
+// behaviour: on non-darwin --status --json emits {"trusted": true}
+// (no per-process AX gate exists, so trust is implicit) instead of a
+// "not required on linux" prose line that would break script
+// consumers.
+func TestRunPermissionsStatusJSONLinux(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rc := runPermissions(&stdout, &stderr, "linux", true, true, func() error { return nil }, func() bool { return true })
+	if rc != 0 {
+		t.Fatalf("expected exit 0, got %d", rc)
+	}
+	var got map[string]bool
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not JSON on linux: %v\n%s", err, stdout.String())
+	}
+	if got["trusted"] != true {
+		t.Fatalf(`expected {"trusted": true} on linux, got %v`, got)
+	}
+}
+
+// TestErrAccessibilityDeniedNotPrefixedWithCommandName pins BUG-4:
+// the sentinel's message MUST NOT contain the leading "windowctl: "
+// prefix — the CLI adds it once at print time, so embedding it in the
+// sentinel doubles up.
+func TestErrAccessibilityDeniedNotPrefixedWithCommandName(t *testing.T) {
+	if strings.HasPrefix(windowctl.ErrAccessibilityDenied.Error(), "windowctl:") {
+		t.Fatalf("ErrAccessibilityDenied must not start with 'windowctl:' (the CLI adds that); got %q",
+			windowctl.ErrAccessibilityDenied.Error())
 	}
 }

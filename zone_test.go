@@ -106,6 +106,80 @@ func TestSplitZoneRectRespectsMonitorOffset(t *testing.T) {
 	}
 }
 
+// TestEnumZoneRectOnNonPrimaryMonitorIsExactHalves regression-pins
+// BUG-7: full-height zones (1A, 1B) on a non-primary monitor must
+// resolve to the full Monitor.Height with no menu-bar inset, and
+// quarter zones must be pixel-exact halves/quarters of the monitor.
+// (The 25px / 60px drift the original bug reported is a macOS AX
+// post-move clamp surfaced by the adapter, not a zone.go math error.)
+func TestEnumZoneRectOnNonPrimaryMonitorIsExactHalves(t *testing.T) {
+	// Non-primary monitor at the right of the primary; the OS gives
+	// it no menu bar of its own, so zones must use the full height.
+	m := mon(1920, 0, 1920, 1080)
+	cases := []struct {
+		zone string
+		want Rect
+	}{
+		{"1A", Rect{X: 1920, Y: 0, W: 960, H: 1080}},
+		{"1B", Rect{X: 2880, Y: 0, W: 960, H: 1080}},
+		{"2A", Rect{X: 1920, Y: 0, W: 960, H: 540}},
+		{"2B", Rect{X: 2880, Y: 0, W: 960, H: 540}},
+		{"2C", Rect{X: 1920, Y: 540, W: 960, H: 540}},
+		{"2D", Rect{X: 2880, Y: 540, W: 960, H: 540}},
+	}
+	for _, c := range cases {
+		z, _ := ParseZone(c.zone)
+		got := z.Rect(m)
+		if got != c.want {
+			t.Errorf("zone %s on non-primary monitor: got %+v, want %+v", c.zone, got, c.want)
+		}
+	}
+}
+
+// TestEnumZoneRectOnOddDimensionsAvoidsRoundingDrift regression-pins
+// the right-half / bottom-half "off-by-one" sliver from BUG-7. With
+// odd Width / Height, integer division would leave a 1-px gap; the
+// right and bottom halves compensate by taking (Width - Width/2)
+// rather than Width/2 so the four quadrants tile the monitor with
+// no gap.
+func TestEnumZoneRectOnOddDimensionsAvoidsRoundingDrift(t *testing.T) {
+	m := mon(0, 0, 1921, 1081) // both dims odd
+	for _, c := range []struct {
+		zone string
+		want Rect
+	}{
+		// halfW = 960 → 1B width must be 961, total = 1921 (no gap).
+		{"1A", Rect{X: 0, Y: 0, W: 960, H: 1081}},
+		{"1B", Rect{X: 960, Y: 0, W: 961, H: 1081}},
+		// halfH = 540 → bottom row height must be 541, total = 1081.
+		{"2A", Rect{X: 0, Y: 0, W: 960, H: 540}},
+		{"2B", Rect{X: 960, Y: 0, W: 961, H: 540}},
+		{"2C", Rect{X: 0, Y: 540, W: 960, H: 541}},
+		{"2D", Rect{X: 960, Y: 540, W: 961, H: 541}},
+	} {
+		z, _ := ParseZone(c.zone)
+		got := z.Rect(m)
+		if got != c.want {
+			t.Errorf("zone %s on odd-dim monitor: got %+v, want %+v", c.zone, got, c.want)
+		}
+	}
+}
+
+// TestEnumZoneRectOnTinyMonitorIsExactHalves regression-pins BUG-8's
+// upstream contract: even on a small (1024x640) monitor, the zone
+// math must produce exact halves. The OS-side clamp that BUG-8
+// targets is detected by the adapter post-move, not by skewing the
+// zone math.
+func TestEnumZoneRectOnTinyMonitorIsExactHalves(t *testing.T) {
+	m := mon(3840, 30, 1024, 640)
+	z, _ := ParseZone("1A")
+	got := z.Rect(m)
+	want := Rect{X: 3840, Y: 30, W: 512, H: 640}
+	if got != want {
+		t.Fatalf("zone 1A on tiny monitor: got %+v, want %+v", got, want)
+	}
+}
+
 func TestZoneStringRoundtrip(t *testing.T) {
 	for _, in := range []string{"1A", "2D", "3:2", "10:5"} {
 		z, err := ParseZone(in)

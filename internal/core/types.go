@@ -5,34 +5,48 @@
 package core
 
 type Window struct {
-	ID         string
-	Title      string
-	App        string
-	PID        int
-	Executable string
-	Monitor    int
-	Bounds     Rect
+	ID    string
+	Title string
+	App   string
+	PID   int
+	// Monitor is the 1-indexed ID of the monitor whose bounds contain
+	// the window's centroid. 0 means "off-screen / on no monitor"
+	// (the window's centroid does not lie within any reported display).
+	// Stamped by the public listWindowsWith path, not by adapters.
+	Monitor int
+	// Focused is true when this window is the frontmost on the focused
+	// monitor — i.e. the topmost (z-ordered) window whose centroid
+	// lies on the monitor flagged Focused. Stamped by the public
+	// listWindowsWith path.
+	Focused bool
+	Bounds  Rect
 }
 
 type Monitor struct {
-	ID      int
-	X, Y    int
-	Width   int
-	Height  int
-	Primary bool
+	ID      int  `json:"ID"`
+	X       int  `json:"X"`
+	Y       int  `json:"Y"`
+	Width   int  `json:"Width"`
+	Height  int  `json:"Height"`
+	Primary bool `json:"Primary"`
 	// Active is true when the OS cursor is currently over this
 	// monitor. Independent of Focused — the user can mouse over one
 	// display while typing into a window on another.
-	Active bool
+	Active bool `json:"Active"`
 	// Focused is true when the frontmost (key) window's centroid
 	// falls on this monitor. The "where am I working" signal as
 	// opposed to Active's "where is my pointer".
-	Focused bool
+	Focused bool `json:"Focused"`
 }
 
+// Rect's JSON tags spell the dimensions out (Width/Height) so the wire
+// format matches Monitor's. The Go field names stay terse (W/H) so
+// existing callers using the public Rect struct don't break.
 type Rect struct {
-	X, Y int
-	W, H int
+	X int `json:"X"`
+	Y int `json:"Y"`
+	W int `json:"Width"`
+	H int `json:"Height"`
 }
 
 type Filter struct {

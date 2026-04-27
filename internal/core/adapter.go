@@ -2,9 +2,13 @@ package core
 
 import "errors"
 
-var ErrNotImplemented = errors.New("windowctl: operation not implemented on this platform")
+// Sentinel errors are stripped of any "windowctl:" prefix so the CLI
+// can add it once at print time. Wrapping these from elsewhere in the
+// codebase (via fmt.Errorf("%w: ...", core.ErrNoMatch, ...)) therefore
+// also prints clean.
+var ErrNotImplemented = errors.New("operation not implemented on this platform")
 
-var ErrNoMatch = errors.New("windowctl: no window matched the filter")
+var ErrNoMatch = errors.New("no window matched the filter")
 
 // ErrAccessibilityDenied is returned by the macOS adapter when a Move
 // or Focus call is attempted while the running process is not trusted
@@ -16,7 +20,7 @@ var ErrNoMatch = errors.New("windowctl: no window matched the filter")
 // users at the `windowctl permissions` opt-in subcommand so the
 // remediation is one copy-paste away. The smoke harness still greps
 // for the leading "Accessibility permission denied" substring.
-var ErrAccessibilityDenied = errors.New("windowctl: Accessibility permission denied — run 'windowctl permissions' to grant, or grant manually in System Settings → Privacy & Security → Accessibility, then re-run")
+var ErrAccessibilityDenied = errors.New("Accessibility permission denied — run 'windowctl permissions' to grant, or grant manually in System Settings → Privacy & Security → Accessibility, then re-run")
 
 type Adapter interface {
 	ListWindows() ([]Window, error)

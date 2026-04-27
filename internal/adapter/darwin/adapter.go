@@ -715,6 +715,15 @@ func markFocused(ms []core.Monitor, cx, cy int) {
 	}
 }
 
+// moveClampToleranceDarwin is the per-axis pixel slack we tolerate
+// between requested and actual post-move bounds before reporting an
+// OS-imposed clamp. macOS adds small structural drift via title-bar /
+// shadow accounting that's unrelated to a real minimum-size clamp;
+// 10px absorbs that without hiding the bigger silent clamps that
+// motivate this check (e.g. Chrome refusing < ~833px wide on a
+// 1024px-wide display, or AX nudging Y under the menu bar).
+const moveClampToleranceDarwin = 10
+
 func (a *Adapter) Move(id string, b core.Rect) error {
 	cgID, err := parseCGWindowID(id)
 	if err != nil {
@@ -725,7 +734,67 @@ func (a *Adapter) Move(id string, b core.Rect) error {
 		C.double(b.X), C.double(b.Y),
 		C.double(b.W), C.double(b.H),
 	))
-	return translateAXReturn(rc, id, "move")
+	if err := translateAXReturn(rc, id, "move"); err != nil {
+		return err
+	}
+	// Post-move sanity check: re-read the window's CG bounds and compare
+	// against what we asked for. AX reports success even when the OS
+	// (or the app's minimum-size constraint) silently clamps the
+	// geometry — caller would otherwise see a "successful" move that
+	// landed somewhere else. Re-fetching via ListWindows keeps this
+	// pure Go (no new CGO surface) at the cost of one extra CG call.
+	actual, ok := findWindowBounds(a, id)
+	if !ok {
+		// Window vanished between move and re-read — rare, but not
+		// worth failing over; the move itself reported success.
+		return nil
+	}
+	if clampDelta(actual, b) > moveClampToleranceDarwin {
+		return fmt.Errorf("requested %dx%d at (%d,%d), OS clamped to %dx%d at (%d,%d) (likely a minimum-window-size constraint)",
+			b.W, b.H, b.X, b.Y,
+			actual.W, actual.H, actual.X, actual.Y)
+	}
+	return nil
+}
+
+// findWindowBounds re-reads the bounds for a CG window id by listing
+// all windows and matching by id. Returns (bounds, true) on hit,
+// (zero, false) if the window is no longer enumerable.
+func findWindowBounds(a *Adapter, id string) (core.Rect, bool) {
+	ws, err := a.ListWindows()
+	if err != nil {
+		return core.Rect{}, false
+	}
+	for _, w := range ws {
+		if w.ID == id {
+			return w.Bounds, true
+		}
+	}
+	return core.Rect{}, false
+}
+
+// clampDelta returns the largest per-axis absolute difference between
+// the actual and requested rects. Used to decide whether a post-move
+// re-read indicates the OS clamped our request.
+func clampDelta(actual, requested core.Rect) int {
+	d := abs(actual.X - requested.X)
+	if v := abs(actual.Y - requested.Y); v > d {
+		d = v
+	}
+	if v := abs(actual.W - requested.W); v > d {
+		d = v
+	}
+	if v := abs(actual.H - requested.H); v > d {
+		d = v
+	}
+	return d
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func (a *Adapter) Focus(id string) error {

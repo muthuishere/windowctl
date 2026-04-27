@@ -180,7 +180,55 @@ func listWindowsWith(a Adapter, filter Filter) ([]Window, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Stamp Monitor + Focused on the *unfiltered* z-ordered list so
+	// (a) Window.Monitor uses the same 1-indexed IDs that monitors
+	// list reports (BUG-1), and (b) Window.Focused refers to the true
+	// frontmost window on the focused monitor — independent of which
+	// windows the caller's filter happens to keep (BUG-9).
+	monitors, mErr := listMonitorsWith(a)
+	if mErr == nil {
+		stampMonitor(ws, monitors)
+		stampFocused(ws, monitors)
+	}
 	return applyFilter(ws, filter), nil
+}
+
+// stampMonitor sets each window's Monitor field to the 1-indexed ID of
+// the monitor containing its centroid, or 0 if its centroid is off
+// every monitor. Mutates ws in place.
+func stampMonitor(ws []Window, ms []Monitor) {
+	for i := range ws {
+		ws[i].Monitor = monitorIDForCentroid(ws[i].Bounds, ms)
+	}
+}
+
+// stampFocused sets Focused=true on the first window (in the adapter's
+// z-order, frontmost first on darwin/windows) whose centroid lies on
+// the monitor flagged Focused. We rely on the adapter-stamped
+// Monitor.Focused as the source of truth for "which display has the
+// key window" rather than adding an OS-specific frontmost-window probe
+// to the public layer; the first-in-z-order window on that display is
+// then by definition the focused window.
+//
+// No-op if no monitor is flagged Focused (e.g. linux adapter today) or
+// if no listed window's centroid lands on it.
+func stampFocused(ws []Window, ms []Monitor) {
+	focusedID := 0
+	for _, m := range ms {
+		if m.Focused {
+			focusedID = m.ID
+			break
+		}
+	}
+	if focusedID == 0 {
+		return
+	}
+	for i := range ws {
+		if ws[i].Monitor == focusedID {
+			ws[i].Focused = true
+			return
+		}
+	}
 }
 
 func moveWith(a Adapter, match Match, target Target) error {

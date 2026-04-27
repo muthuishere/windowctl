@@ -64,6 +64,22 @@ func findMonitor(ms []Monitor, id int) (Monitor, error) {
 	return Monitor{}, fmt.Errorf("monitor: invalid monitor ID %d", id)
 }
 
+// monitorIDForCentroid returns the 1-indexed monitor ID whose bounds
+// contain the centroid of r. Returns 0 when the centroid lies outside
+// every monitor (off-screen). Mirrors the containment check used by
+// the darwin adapter's markActive / markFocused so window->monitor
+// stamping uses the same anchor as Monitor.Focused.
+func monitorIDForCentroid(r Rect, ms []Monitor) int {
+	cx := r.X + r.W/2
+	cy := r.Y + r.H/2
+	for _, m := range ms {
+		if cx >= m.X && cx < m.X+m.Width && cy >= m.Y && cy < m.Y+m.Height {
+			return m.ID
+		}
+	}
+	return 0
+}
+
 func overlapArea(r Rect, m Monitor) int {
 	x1 := max(r.X, m.X)
 	y1 := max(r.Y, m.Y)
