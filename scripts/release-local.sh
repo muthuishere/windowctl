@@ -58,6 +58,28 @@ echo ""
 echo "── goreleaser snapshot build (5 targets) ──"
 goreleaser release --snapshot --clean --skip=publish
 
+# Goreleaser snapshot mode names artifacts using its synthesized
+# "{{.Version}}-snapshot" template, where {{.Version}} is derived from
+# the latest git tag (often "0.0.0" pre-first-release). That doesn't
+# match the $VERSION the user is publishing under, so rename the
+# tarballs/zips and rewrite checksums.txt to use $VERSION before we
+# attach them to the GitHub release. Idempotent: no-op if the
+# artifacts are already named with $VERSION.
+SNAPSHOT_VERSION=$(ls dist/windowctl_*_darwin_arm64.tar.gz 2>/dev/null \
+  | sed -E 's|.*windowctl_(.+)_darwin_arm64\.tar\.gz|\1|' | head -1)
+if [ -n "$SNAPSHOT_VERSION" ] && [ "$SNAPSHOT_VERSION" != "$VERSION" ]; then
+  echo ""
+  echo "── renaming dist artifacts: $SNAPSHOT_VERSION → $VERSION ──"
+  for f in dist/windowctl_${SNAPSHOT_VERSION}_*; do
+    [ -e "$f" ] || continue
+    mv "$f" "${f//${SNAPSHOT_VERSION}/${VERSION}}"
+  done
+  # sed -i needs a backup-suffix arg on BSD/macOS; use ".bak" then drop
+  # to stay portable across mac and linux.
+  sed -i.bak "s/${SNAPSHOT_VERSION}/${VERSION}/g" dist/checksums.txt
+  rm -f dist/checksums.txt.bak
+fi
+
 # ── publish npm ──────────────────────────────────────────────────────
 echo ""
 echo "── publish to npm ──"
@@ -67,7 +89,17 @@ bash scripts/publish-npm-local.sh
 echo ""
 echo "── commit + tag + push ──"
 git add npm/package.json npm/platforms/*/package.json
-git commit -m "release: v$VERSION"
+# When the bump is a no-op (versions already at $VERSION from a previous
+# attempt or because the working tree was already up-to-date), there's
+# nothing to commit and `git commit` would exit non-zero, killing the
+# script before it tags/pushes/creates the release. Guard with a staged-
+# diff check so the bump-commit becomes optional but the rest of the
+# release still runs.
+if git diff --staged --quiet; then
+  echo "── version already at $VERSION; skipping bump commit ──"
+else
+  git commit -m "release: v$VERSION"
+fi
 git tag "v$VERSION"
 git push origin main
 git push origin "v$VERSION"
