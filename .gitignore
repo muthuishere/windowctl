@@ -7,3 +7,4 @@ windowctl
 /npm/native/
 /npm/node_modules/
 /npm/package-lock.json
+/.claude/
