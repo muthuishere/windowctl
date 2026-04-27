@@ -11,6 +11,7 @@ A unified interface across macOS, Windows, and Linux for:
 - Moving windows across monitors using zones or absolute/relative coordinates
 - Resizing windows in place
 - Focusing specific windows
+- Bulk-placing many windows in one call from a JSON layout (`windowctl batch`)
 - Granting macOS Accessibility permission interactively
 
 ## Installation
@@ -77,6 +78,8 @@ JSON shape (per window):
 - **`Focused`** is `true` for the frontmost window on the focused monitor — useful for "operate on whatever I'm looking at right now" scripts.
 - **`Bounds`** uses `Width`/`Height` (not `W`/`H`) — same shape as `monitors list`.
 
+Only real application windows are listed. macOS menu-bar widgets, status items, the Dock, Spotlight, Control Center, AltTab, and Window Server menubars (everything on a non-zero `kCGWindowLayer`) are filtered out so the list reflects what you can actually move and focus.
+
 ### List monitors
 
 ```sh
@@ -135,6 +138,30 @@ windowctl resize --app "Google Chrome" --w 900 --h 700
 windowctl focus --title "jira"
 windowctl focus --app "Google Chrome"
 ```
+
+### Batch (bulk move)
+
+Place many windows in one call by piping a JSON array of move specs. Each entry is the same shape as `move`'s flags. Entries run sequentially; one failure (e.g. an OS clamp on a single window) does **not** abort the rest.
+
+```sh
+windowctl batch < layout.json
+windowctl batch --file layout.json
+windowctl batch --json < layout.json   # structured per-entry results
+```
+
+`layout.json`:
+
+```json
+[
+  { "app": "Ghostty",          "monitor": 2, "x": 0,   "y": 25,  "w": 1920, "h": 1055 },
+  { "app": "Activity Monitor", "monitor": 1, "zone": "2A" },
+  { "title": "Inbox",                        "x": 100, "y": 100, "w": 800,  "h": 600  }
+]
+```
+
+Per entry: at least one of `title` / `app` is required; target is **either** `zone` **or** all four of `x`/`y`/`w`/`h` (not both). `monitor` is optional and 1-indexed.
+
+Exit codes: `0` if every entry succeeded, `1` if any entry failed, `2` for invalid input (parse error, missing file). With `--json` the same per-entry results land on stdout as `{ "entry": {...}, "ok": true }` or `{ "entry": {...}, "error": "..." }`.
 
 ## Zones
 
@@ -213,6 +240,19 @@ err = windowctl.Resize(match, 900, 700)
 
 // Focus
 err = windowctl.Focus(match)
+
+// Bulk move — same semantics as `windowctl batch`. Optional fields
+// (Monitor, X, Y, W, H) are `*int` so callers can distinguish "unset"
+// from "zero"; the JSON form omits unset keys for the same reason.
+mon := 2
+x, y, w, h := 0, 25, 1920, 1055
+results := windowctl.Batch([]windowctl.BatchEntry{
+    {App: "Ghostty", Monitor: &mon, Zone: "2B"},
+    {App: "Code",    X: &x, Y: &y, W: &w, H: &h},
+})
+for _, r := range results {
+    if r.Err != nil { /* per-entry diagnostic */ }
+}
 
 // macOS AX prompt / status
 err = windowctl.RequestAccessibility()
