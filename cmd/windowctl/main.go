@@ -34,6 +34,10 @@ func main() {
 		permissionsCmd(os.Args[2:])
 	case "batch":
 		batchCmd(os.Args[2:])
+	case "install":
+		installCmd(os.Args[2:])
+	case "uninstall":
+		uninstallCmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 	default:
@@ -53,7 +57,9 @@ Usage:
   windowctl focus (--title <s> | --app <s>)
   windowctl resize (--title <s> | --app <s>) --w <n> --h <n>
   windowctl permissions [--status] [--json]
-  windowctl batch [--file <path>] [--json]   (reads JSON array of entries from stdin or --file)`)
+  windowctl batch [--file <path>] [--json]   (reads JSON array of entries from stdin or --file)
+  windowctl install --skills [--agents]
+  windowctl uninstall --skills [--agents]`)
 }
 
 func windowsCmd(args []string) {

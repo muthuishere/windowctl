@@ -83,6 +83,14 @@ func TestUsageMentionsPermissionsSubcommand(t *testing.T) {
 	}
 }
 
+func TestUsageMentionsInstallSkillsCommand(t *testing.T) {
+	var buf bytes.Buffer
+	usage(&buf)
+	if !strings.Contains(buf.String(), "windowctl install --skills") {
+		t.Fatalf("usage text missing 'windowctl install --skills':\n%s", buf.String())
+	}
+}
+
 // alwaysGranted / alwaysDenied are CheckAccessibility test stubs that
 // also record whether they were invoked, so individual tests can pin
 // "the --status path called check, not request".
@@ -280,6 +288,49 @@ func TestRunPermissionsNoStatusDarwinDoesNotCallCheck(t *testing.T) {
 	}
 	if chk.called != 0 {
 		t.Fatalf("no-status path MUST NOT call CheckAccessibility; got %d", chk.called)
+	}
+}
+
+func TestRunInstallRequiresSkillsFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rc := runInstall(&stdout, &stderr, nil, func(string) (string, error) {
+		return "", errors.New("codex not found")
+	}, func(windowctl.SkillInstallOptions) ([]windowctl.SkillInstallResult, error) {
+		t.Fatal("install action should not run without --skills")
+		return nil, nil
+	})
+	if rc != 2 {
+		t.Fatalf("expected exit 2, got %d", rc)
+	}
+	if !strings.Contains(stderr.String(), "--skills is required") {
+		t.Fatalf("expected --skills requirement in stderr, got %q", stderr.String())
+	}
+}
+
+func TestRunInstallSkillsAutoIncludesAgentsWhenCodexIsPresent(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	var got windowctl.SkillInstallOptions
+	install := func(opts windowctl.SkillInstallOptions) ([]windowctl.SkillInstallResult, error) {
+		got = opts
+		return []windowctl.SkillInstallResult{
+			{Host: "claude", Path: "/tmp/claude/window-ctl-skill", Action: "installed"},
+			{Host: "agents", Path: "/tmp/agents/window-ctl-skill", Action: "installed"},
+		}, nil
+	}
+	rc := runInstall(&stdout, &stderr, []string{"--skills"}, func(name string) (string, error) {
+		if name == "codex" {
+			return "/usr/local/bin/codex", nil
+		}
+		return "", errors.New("unexpected binary lookup")
+	}, install)
+	if rc != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%q)", rc, stderr.String())
+	}
+	if !got.IncludeAgents {
+		t.Fatalf("expected codex detection to enable agents install, got %+v", got)
+	}
+	if !strings.Contains(stdout.String(), "agents: installed") {
+		t.Fatalf("expected agents install line, got %q", stdout.String())
 	}
 }
 

@@ -1,0 +1,29 @@
+version: '3'
+
+# Local dev tasks for window-ctl-skill.
+#
+# Use these to run the skill from the working tree without going through
+# npm publish / npm install -g. The install symlinks ~/.claude/skills/<skill>
+# (and ~/.agents/skills/<skill> if codex is on PATH) to this directory, so
+# edits to references/*.md are picked up live — no reinstall needed.
+
+tasks:
+  default:
+    desc: "List available tasks."
+    cmds:
+      - task -l
+
+  local:install:
+    desc: "Symlink this working tree into ~/.claude/skills (and ~/.agents/skills if codex is present). Live-reload edits."
+    cmds:
+      - sh install.sh
+
+  local:uninstall:
+    desc: "Remove the symlinks created by local:install. Leaves npm-installed copies alone."
+    cmds:
+      - sh uninstall.sh
+
+  validate:
+    desc: "Run skill self-checks (recipe format + cross-references + install-test)."
+    cmds:
+      - sh tests/all.sh

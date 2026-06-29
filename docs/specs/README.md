@@ -29,6 +29,7 @@ higher-level capability is built. Everything else builds on it.
 | 9 | [`release-pipeline`](./09-release-pipeline.md) | Implemented | §9.1, §9.2 |
 | 10 | [`ci-test-matrix`](./10-ci-test-matrix.md) | Partial | §10.1, §10.2, §10.3, §10.4 |
 | 11 | [`permissions-subcommand`](./11-permissions-subcommand.md) | Implemented | §7.2, §11 |
+| 12 | [`skills-subcommand`](./12-skills-subcommand.md) | Implemented | FR-SKL-01, FR-SKL-02, §11 |
 
 **Status legend:** `Implemented` · `Partial` · `Planned` · `Not planned`.
 

@@ -228,7 +228,22 @@ A declarative YAML file describing how multiple windows should be arranged acros
 - **Command**: `windowctl apply <layout.yaml>`
 - Reads a YAML layout file and moves/arranges windows according to its specification
 
-### 5.6 Output Modes
+### 5.6 CLI — Skills
+
+#### FR-SKL-01: Install Bundled Agent Skill
+
+- **Command**: `windowctl install --skills`
+- Installs the bundled `window-ctl-skill` into `~/.claude/skills/window-ctl-skill`
+- If `codex` is detected on PATH, also installs the bundled skill into `~/.agents/skills/window-ctl-skill`
+- `--agents` forces the `~/.agents/skills` install even when `codex` is not on PATH
+
+#### FR-SKL-02: Uninstall Bundled Agent Skill
+
+- **Command**: `windowctl uninstall --skills`
+- Removes the bundled `window-ctl-skill` from the same target directories as install
+- Missing installs are treated as a no-op, not an error
+
+### 5.7 Output Modes
 
 #### FR-OUT-01: Table Output (default)
 

@@ -272,6 +272,14 @@ WCTL_AX_DEBUG=1 windowctl move --app "Google Chrome" --x 100 --y 100 --w 800 --h
 If you want to drive `windowctl` from an agent in plain English (*"split chrome left, slack right"*, *"send vscode to my external"*, *"save this layout as work-mode"*) instead of writing flag combinations, there is a companion agent skill:
 
 ```sh
+windowctl install --skills
+```
+
+That installs the bundled `window-ctl-skill` into `~/.claude/skills/window-ctl-skill`, and also into `~/.agents/skills/window-ctl-skill` when `codex` is on your PATH.
+
+If you prefer the registry flow, the published copy is still available:
+
+```sh
 npx skills add muthuishere-agent-skills/window-control
 ```
 
