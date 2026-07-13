@@ -48,7 +48,7 @@ const viewerTemplate = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=6, user-scalable=yes">
 <title>windowctl remote</title>
 <style>
   :root { color-scheme: dark; }
@@ -60,24 +60,34 @@ const viewerTemplate = `<!doctype html>
   button:hover { border-color: #3d84c6; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #35c46a; display: inline-block; }
   .wrap { padding: 12px; display: flex; justify-content: center; }
-  #screen { max-width: 100%; height: auto; border: 1px solid #23272e; border-radius: 6px; cursor: crosshair; box-shadow: 0 8px 40px rgba(0,0,0,.5); touch-action: none; -webkit-user-select: none; user-select: none; }
+  /* touch-action: manipulation keeps pinch-zoom + pan working (so you
+     can zoom in on a phone to see detail) while disabling the 300ms
+     double-tap-zoom, so our double-tap = double-click still fires. */
+  #screen { max-width: 100%; height: auto; border: 1px solid #23272e; border-radius: 6px; cursor: crosshair; box-shadow: 0 8px 40px rgba(0,0,0,.5); touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   #hint { color: #8a929e; }
   #status { color: #8a929e; margin-left: auto; }
   kbd { background: #23272e; border-radius: 4px; padding: 1px 5px; border: 1px solid #333; }
+  /* Real, VISIBLE input — mobile browsers refuse to raise the soft
+     keyboard for a hidden / zero-size / opacity:0 field, so this must
+     stay on screen and tappable. */
+  #kin { min-width: 180px; flex: 1 1 180px; padding: 6px 10px; background: #1d2127;
+         color: #e6e6e6; border: 1px solid #3d84c6; border-radius: 6px; font: inherit; }
+  #kin::placeholder { color: #6b7480; }
+  #kbd.active { border-color: #35c46a; color: #35c46a; }
 </style>
 </head>
 <body>
 <header>
   <span class="dot"></span><b>windowctl remote</b>
   <label>Monitor <select id="mon"></select></label>
-  <label><input type="checkbox" id="ctl" checked> allow control</label>
-  <button id="kbd" type="button" title="show keyboard (touch devices)">⌨ keyboard</button>
-  <span id="hint">tap / click = left · long-press or shift = right · double-tap = double-click</span>
+  <label><input type="checkbox" id="ctl" checked> control</label>
+  <button id="kbd" type="button" title="focus the type box (raises the keyboard on mobile)">⌨</button>
+  <input id="kin" placeholder="tap here to type into the remote →"
+         autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="enter">
   <span id="status">connecting…</span>
-  <input id="kin" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"
-         style="position:fixed;opacity:0;pointer-events:none;bottom:0;left:0;width:1px;height:1px">
 </header>
 <div class="wrap"><img id="screen" alt="remote screen"></div>
+<div id="hint" style="text-align:center;color:#8a929e;padding:0 12px 12px">tap / click = left · long-press = right · double-tap = double-click · type in the box above</div>
 
 <script>
 const TOKEN = "__TOKEN__";
@@ -165,25 +175,30 @@ img.addEventListener('contextmenu', ev => {
 });
 
 // --- Touch control (phone / tablet) ---
-// A tap = left click. A long-press (>500ms without moving) = right
-// click. A quick second tap within 300ms of the last = double-click.
-// touchstart is preventDefault'd so the browser doesn't also synth a
-// 300ms-late mouse 'click' (which would double-fire every tap).
-let touchTimer = null, touchStart = null, lastTapAt = 0, movedFar = false;
+// Two-finger gestures are left entirely to the browser (pinch-zoom /
+// pan) — we only act on SINGLE-finger touches, and never preventDefault
+// on touchstart/touchmove, so native zoom keeps working. A quick tap =
+// left click; a long-press (>500ms, no move) = right-click; a second
+// tap within 300ms = double-click. Only touchend preventDefaults, and
+// only for a real tap, to suppress the 300ms-late synthetic mouse click
+// (avoids a double). A finger that moves is a pan/zoom — ignored.
+let touchTimer = null, touchStart = null, lastTapAt = 0, movedFar = false, multiTouch = false;
 img.addEventListener('touchstart', ev => {
-  if (ev.touches.length !== 1) return;
-  ev.preventDefault();
+  if (ev.touches.length > 1) { multiTouch = true; touchStart = null; if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; } return; }
+  multiTouch = false;
   const t = ev.touches[0];
   touchStart = { x: t.clientX, y: t.clientY };
   movedFar = false;
   touchTimer = setTimeout(() => {
     touchTimer = null;
+    if (!touchStart) return;
     const p = toScreen(touchStart.x, touchStart.y);
     send({ type: 'click', x: p.x, y: p.y, button: 'right' });  // long-press → right-click
     touchStart = null;
   }, 500);
-}, { passive: false });
+}, { passive: true });
 img.addEventListener('touchmove', ev => {
+  if (ev.touches.length > 1) { multiTouch = true; }
   if (!touchStart || ev.touches.length !== 1) return;
   const t = ev.touches[0];
   if (Math.abs(t.clientX - touchStart.x) > 12 || Math.abs(t.clientY - touchStart.y) > 12) {
@@ -193,8 +208,8 @@ img.addEventListener('touchmove', ev => {
 }, { passive: true });
 img.addEventListener('touchend', ev => {
   if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
-  if (!touchStart || movedFar) { touchStart = null; return; }
-  ev.preventDefault();
+  if (multiTouch || !touchStart || movedFar) { touchStart = null; return; }
+  ev.preventDefault(); // suppress the synthetic mouse click for this tap
   const p = toScreen(touchStart.x, touchStart.y);
   const now = Date.now();
   const isDouble = (now - lastTapAt) < 300;
@@ -208,23 +223,47 @@ img.addEventListener('touchend', ev => {
 const NAMED = { 'Enter':'enter','Tab':'tab','Escape':'esc','Backspace':'backspace','Delete':'delete',
   'ArrowUp':'up','ArrowDown':'down','ArrowLeft':'left','ArrowRight':'right',
   'Home':'home','End':'end','PageUp':'pageup','PageDown':'pagedown',' ':'space' };
-// --- Mobile soft keyboard ---
-// Physical keyboards fire keydown on document (handled below). Touch
-// devices have no physical keyboard, so the "⌨ keyboard" button focuses
-// a hidden input to raise the OS soft keyboard; its keydown gives us
-// Enter/Backspace/arrows, and its 'input' event gives us typed glyphs
-// (which we forward as text and then clear so it never accumulates).
+// --- Mobile soft keyboard (Chrome Android / iOS Safari) ---
+// The type box (#kin) is a REAL visible input — mobile browsers won't
+// raise the keyboard for a hidden/zero-size field. Tap it (or the ⌨
+// button) and the soft keyboard appears.
+//
+// Chrome Android reports keyCode 229 / key "Unidentified" for character
+// keys, so we CANNOT read typed characters from keydown — the text only
+// arrives via the 'input' event (and via composition events for
+// predictive / swipe typing). So: characters come from input/
+// compositionend; only real-keyCode special keys (Enter, Backspace,
+// arrows on a physical keyboard) come from keydown. The field is cleared
+// after every event so it never accumulates and Backspace-on-empty
+// still fires cleanly.
 const kin = document.getElementById('kin');
-document.getElementById('kbd').addEventListener('click', () => {
-  kin.style.pointerEvents = 'auto';
-  kin.focus();
+const kbdBtn = document.getElementById('kbd');
+kbdBtn.addEventListener('click', () => { kin.focus(); kbdBtn.classList.add('active'); });
+kin.addEventListener('focus', () => kbdBtn.classList.add('active'));
+kin.addEventListener('blur', () => kbdBtn.classList.remove('active'));
+
+let composing = false;
+kin.addEventListener('compositionstart', () => { composing = true; });
+kin.addEventListener('compositionend', ev => {
+  composing = false;
+  if (ev.data) send({ type: 'text', text: ev.data });
+  kin.value = '';
 });
-kin.addEventListener('input', () => {
-  const v = kin.value;
-  if (v) { send({ type: 'text', text: v }); kin.value = ''; }
+kin.addEventListener('input', ev => {
+  if (composing || ev.isComposing) return; // wait for compositionend to get final text
+  const it = ev.inputType || '';
+  if (it === 'deleteContentBackward') { send({ type: 'key', combo: 'backspace' }); kin.value = ''; return; }
+  if (it === 'deleteContentForward')  { send({ type: 'key', combo: 'delete' });    kin.value = ''; return; }
+  if (it === 'insertLineBreak' || it === 'insertParagraph') { send({ type: 'key', combo: 'enter' }); kin.value = ''; return; }
+  const t = (ev.data != null) ? ev.data : kin.value;
+  if (t) send({ type: 'text', text: t });
+  kin.value = '';
 });
 kin.addEventListener('keydown', ev => {
-  if (NAMED[ev.key] && ev.key !== ' ') {   // space comes through 'input'
+  // 229 / isComposing = soft-keyboard character input — leave it to the
+  // input event. Only real special keys are handled here.
+  if (ev.keyCode === 229 || ev.isComposing) return;
+  if (NAMED[ev.key] && ev.key !== ' ') {
     ev.preventDefault();
     send({ type: 'key', combo: NAMED[ev.key] });
   }
