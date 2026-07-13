@@ -167,6 +167,19 @@ func focusSettleDuration() time.Duration {
 // verification is skipped: Focus succeeding is the best signal
 // available there.
 func ensureFocused(a Adapter, match Match) error {
+	// Skip the raise/activate when the matched window is ALREADY focused.
+	// Re-raising a window that's already frontmost is not idempotent: on
+	// macOS the AX raise + NSRunningApplication activate resets the app's
+	// first responder, which discards the text-field focus a preceding
+	// click established — so a `find-click` then `type` would type into a
+	// re-activated-but-not-first-responder view and drop the keystrokes
+	// (reproduced live in recipe replay). Verifying without raising keeps
+	// the guard's safety (still refuses to type into the wrong window)
+	// without disturbing an already-correct focus.
+	if already, verifiable := matchedWindowFocused(a, match); verifiable && already {
+		sleepFn(focusSettleDuration())
+		return nil
+	}
 	if err := focusWith(a, match); err != nil {
 		return err
 	}
@@ -204,6 +217,37 @@ func ensureFocused(a Adapter, match Match) error {
 		}
 		sleepFn(waitPollInterval / 5)
 	}
+}
+
+// matchedWindowFocused reports whether the matched window is currently
+// focused (already, ok). ok is false on platforms/arrangements where
+// focus is not observable (no Monitor.Focused flag), in which case the
+// caller must fall back to raising. Read-only: never raises or prompts.
+func matchedWindowFocused(a Adapter, match Match) (already bool, ok bool) {
+	monitors, err := listMonitorsWith(a)
+	if err != nil {
+		return false, false
+	}
+	verifiable := false
+	for _, m := range monitors {
+		if m.Focused {
+			verifiable = true
+			break
+		}
+	}
+	if !verifiable {
+		return false, false
+	}
+	ws, err := listWindowsWith(a, Filter{Title: match.Title, App: match.App})
+	if err != nil {
+		return false, false
+	}
+	for _, w := range ws {
+		if w.Focused {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 // PressKey parses a combo string like "cmd+shift+s" or "enter" and

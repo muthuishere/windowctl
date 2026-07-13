@@ -1,0 +1,31 @@
+{
+  "recipes": [
+    {
+      "name": "youtube-comment",
+      "description": "Reach a YouTube video's comment box and fill it with $TEXT. Vision-first (find the 'Add a comment' placeholder), keystroke type with clipboard-paste fallback. STOPS before posting: the final Comment-button click only runs with --confirm.",
+      "match": { "app": "Google Chrome", "title": "YouTube" },
+      "vars": ["TEXT"],
+      "steps": [
+        { "action": "focus" },
+        { "action": "scroll", "dy": -12, "note": "scroll down toward the comments section" },
+        { "action": "wait-text", "text": "Add a comment", "timeout_ms": 6000 },
+        { "action": "find-click", "text": "Add a comment", "note": "vision-first; place cursor in the compose box" },
+        { "action": "type", "text": "$TEXT", "method": "auto", "note": "keystroke, with paste fallback on empty result" },
+        { "action": "find-click", "text": "Comment", "confirm": true, "note": "SUBMIT — only fires with --confirm; otherwise the box is left filled, unposted" }
+      ]
+    },
+    {
+      "name": "x-compose",
+      "description": "Focus X (Twitter) and fill the compose box with $TEXT. Vision-first find of the 'What is happening' placeholder. STOPS before posting: the Post button click only runs with --confirm.",
+      "match": { "app": "Google Chrome", "title": "X" },
+      "vars": ["TEXT"],
+      "steps": [
+        { "action": "focus" },
+        { "action": "wait-text", "text": "happening", "timeout_ms": 6000 },
+        { "action": "find-click", "text": "happening", "note": "the 'What is happening?!' compose placeholder" },
+        { "action": "type", "text": "$TEXT", "method": "auto" },
+        { "action": "find-click", "text": "Post", "confirm": true, "note": "SUBMIT — only fires with --confirm" }
+      ]
+    }
+  ]
+}

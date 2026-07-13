@@ -248,17 +248,20 @@ func TestWaitForWindowTimesOut(t *testing.T) {
 	}
 }
 
-func TestTypeIntoVerifiesFocusBeforeTyping(t *testing.T) {
+func TestTypeIntoSkipsRedundantRaiseWhenAlreadyFocused(t *testing.T) {
 	a := newAutomationAdapter()
 	// Window centroid (500,350) is on monitor 1; make monitor 1 the
-	// focused monitor so stampFocused marks the window Focused.
+	// focused monitor so stampFocused already marks the window Focused.
 	a.monitors[0].Focused = true
 	a.monitors[1].Focused = false
 	if err := typeIntoWith(a, Match{App: "google chrome"}, "hello"); err != nil {
 		t.Fatal(err)
 	}
-	if a.focused != "w1" {
-		t.Fatalf("focus was not called on the matched window, got %q", a.focused)
+	// The window is ALREADY the focused window, so ensureFocused must NOT
+	// re-raise it — re-raising resets first responder and drops the very
+	// keystrokes we're about to send. Focus() must not have been called.
+	if a.focused != "" {
+		t.Fatalf("already-focused window should not be re-raised, but Focus(%q) was called", a.focused)
 	}
 	if a.typedText != "hello" {
 		t.Fatalf("typed %q", a.typedText)

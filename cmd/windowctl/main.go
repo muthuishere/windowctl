@@ -46,6 +46,8 @@ func main() {
 		clipboardCmd(os.Args[2:])
 	case "minimize", "maximize", "fullscreen", "close":
 		windowStateCmd(os.Args[1], os.Args[2:])
+	case "recipe":
+		recipeCmd(os.Args[2:])
 	case "mouse":
 		mouseCmd(os.Args[2:])
 	case "type":
@@ -88,6 +90,7 @@ Usage:
   windowctl drag --from-x <n> --from-y <n> --to-x <n> --to-y <n> [--monitor <n>] [--right|--middle]
   windowctl clipboard (get | set [--text <s>])   (set reads stdin when --text omitted)
   windowctl (minimize|maximize|fullscreen|close) (--title <s> | --app <s>)
+  windowctl recipe (list | save <name> [--file <path>] | run <name> [--var K=V ...] [--confirm] [--json])
   windowctl mouse move --x <n> --y <n> [--monitor <n>]
   windowctl mouse click [--x <n> --y <n>] [--monitor <n>] [--right|--middle] [--double]
   windowctl mouse position [--json]
