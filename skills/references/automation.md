@@ -166,6 +166,37 @@ windowctl screenshot --app "Google Chrome" --out /tmp/after.png
 
 ---
 
+## remote — hand the live screen + control to a browser
+
+```sh
+windowctl remote [--monitor <n>] [--port <n>] [--fps <n>] [--tunnel]
+```
+
+Starts a local web server and prints a URL (with an access token baked
+in) that opens a viewer: it streams PNG frames of the chosen monitor
+and forwards clicks / double-clicks / right-clicks / keystrokes back to
+the machine — full remote control from any browser on the LAN. Ctrl-C
+revokes the link and stops everything.
+
+- The URL **is** the key: it carries a per-run random token; requests
+  without it get 403. Share it like a house key, Ctrl-C to revoke.
+- Default is **local only** (`http://127.0.0.1:<port>/?t=...`). Add
+  `--tunnel` to also expose a public `*.trycloudflare.com` URL via
+  cloudflared (must be installed).
+- `--monitor` picks the shared display (default: focused); the viewer
+  also has a monitor dropdown. `--fps` caps the poll rate (1–10,
+  default 2).
+- The viewer maps a click on the image back to the true screen point
+  using the frame's origin + the point-normalization guarantee, so
+  clicks land where you'd expect even on a scaled/retina display.
+- On this path the human watching IS the focus guard — input goes to
+  whatever is focused on screen, which is what a live operator wants.
+
+Use it for "let me drive this machine from my phone/laptop", pairing,
+or handing a session to someone. It needs the same macOS grants as the
+rest of automation (Accessibility for control, Screen Recording for the
+frames).
+
 ## Cross-platform notes (Parallels / multi-OS)
 
 The same six commands exist on macOS, Windows, and Linux. Differences

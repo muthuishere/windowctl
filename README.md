@@ -235,6 +235,16 @@ windowctl type   --app TextEdit --text "safe to type now"
 
 `wait` also matches windows that are **already** open — to catch specifically a *new* window, snapshot `windows list --json` before launching and diff the IDs.
 
+### Remote — screen share + control in a browser
+
+```sh
+windowctl remote                    # local URL: stream a monitor + drive mouse/keyboard from a browser
+windowctl remote --monitor 2 --fps 5
+windowctl remote --tunnel           # also expose a public *.trycloudflare.com URL (needs cloudflared)
+```
+
+Prints a URL with a per-run access token baked in. Open it in any browser (on the LAN by default) to see the live screen and click/type back to the machine. The link **is** the key — requests without the token get 403; press Ctrl-C to revoke it and stop the server. Clicks map to true screen coordinates via the point-normalization guarantee, so they land correctly even on a scaled/retina display. Needs Accessibility (control) + Screen Recording (frames) on macOS.
+
 ## Zones
 
 ### Predefined (Enum) Zones
