@@ -46,6 +46,8 @@ func main() {
 		launchCmd(os.Args[2:])
 	case "wait":
 		waitCmd(os.Args[2:])
+	case "remote":
+		remoteCmd(os.Args[2:])
 	case "install":
 		installCmd(os.Args[2:])
 	case "uninstall":
@@ -78,6 +80,7 @@ Usage:
   windowctl key --combo <s> [--title <s> | --app <s>]   (e.g. "cmd+shift+s", "ctrl+c", "enter")
   windowctl launch --app <s>
   windowctl wait (--title <s> | --app <s>) [--timeout <ms>] [--json]
+  windowctl remote [--monitor <n>] [--port <n>] [--fps <n>] [--tunnel]   (browser screen-share + control; Ctrl-C to stop)
   windowctl install --skills [--agents]
   windowctl uninstall --skills [--agents]`)
 }

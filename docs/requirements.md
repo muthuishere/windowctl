@@ -271,6 +271,14 @@ A declarative YAML file describing how multiple windows should be arranged acros
 - `launch` hands off to the OS launcher (`open -a` / `cmd /c start` / direct exec) and returns immediately; `wait` polls the window list (250ms interval) until a window matches or the timeout (default 10000ms) elapses, then prints the matched window
 - `wait` matches **pre-existing** windows too — callers that need "the NEW window" must snapshot the window list before launching and compare
 
+#### FR-RMT-01: Remote Screen Share + Control
+
+- **Command**: `windowctl remote [--monitor <n>] [--port <n>] [--fps <n>] [--tunnel]`
+- Serves a browser viewer that streams a monitor as PNG frames and forwards clicks/keystrokes back for live remote control
+- Binds `127.0.0.1` and gates every request on a per-run random token embedded in the printed URL (the link is the credential; Ctrl-C revokes); local URL by default, `--tunnel` additionally spawns cloudflared for a public `*.trycloudflare.com` URL
+- Clicks map to true screen coordinates client-side via the FR-SHOT-01 point-normalization guarantee; needs Accessibility (control) + Screen Recording (frames) on macOS
+- See `docs/specs/15-remote-control.md`
+
 ### 5.8 Output Modes
 
 #### FR-OUT-01: Table Output (default)

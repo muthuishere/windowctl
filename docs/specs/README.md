@@ -32,6 +32,7 @@ higher-level capability is built. Everything else builds on it.
 | 12 | [`skills-subcommand`](./12-skills-subcommand.md) | Implemented | FR-SKL-01, FR-SKL-02, §11 |
 | 13 | [`screenshot`](./13-screenshot.md) | Implemented | FR-SHOT-01, §8.2, §11 |
 | 14 | [`input-automation`](./14-input-automation.md) | Implemented | FR-INP-01, FR-INP-02, FR-INP-03, §11 |
+| 15 | [`remote-control`](./15-remote-control.md) | Implemented | FR-RMT-01, §8.2, §11 |
 
 **Status legend:** `Implemented` · `Partial` · `Planned` · `Not planned`.
 
