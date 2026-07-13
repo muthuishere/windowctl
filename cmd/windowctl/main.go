@@ -34,6 +34,20 @@ func main() {
 		permissionsCmd(os.Args[2:])
 	case "batch":
 		batchCmd(os.Args[2:])
+	case "screenshot":
+		screenshotCmd(os.Args[2:])
+	case "mouse":
+		mouseCmd(os.Args[2:])
+	case "type":
+		typeCmd(os.Args[2:])
+	case "key":
+		keyCmd(os.Args[2:])
+	case "launch":
+		launchCmd(os.Args[2:])
+	case "wait":
+		waitCmd(os.Args[2:])
+	case "remote":
+		remoteCmd(os.Args[2:])
 	case "install":
 		installCmd(os.Args[2:])
 	case "uninstall":
@@ -56,8 +70,17 @@ Usage:
   windowctl move (--title <s> | --app <s>) [--monitor <n>] (--zone <z> | --x <n> --y <n> --w <n> --h <n>)
   windowctl focus (--title <s> | --app <s>)
   windowctl resize (--title <s> | --app <s>) --w <n> --h <n>
-  windowctl permissions [--status] [--json]
+  windowctl permissions [--status] [--json] [--screen]
   windowctl batch [--file <path>] [--json]   (reads JSON array of entries from stdin or --file)
+  windowctl screenshot [--monitor <n>] [--x <n> --y <n> --w <n> --h <n>] [--title <s> | --app <s>] [--out <path>] [--json]
+  windowctl mouse move --x <n> --y <n> [--monitor <n>]
+  windowctl mouse click [--x <n> --y <n>] [--monitor <n>] [--right|--middle] [--double]
+  windowctl mouse position [--json]
+  windowctl type --text <s> [--title <s> | --app <s>]   (with a filter: focus + verify before typing)
+  windowctl key --combo <s> [--title <s> | --app <s>]   (e.g. "cmd+shift+s", "ctrl+c", "enter")
+  windowctl launch --app <s>
+  windowctl wait (--title <s> | --app <s>) [--timeout <ms>] [--json]
+  windowctl remote [--monitor <n>] [--port <n>] [--fps <n>] [--tunnel]   (browser screen-share + control; Ctrl-C to stop)
   windowctl install --skills [--agents]
   windowctl uninstall --skills [--agents]`)
 }
@@ -344,17 +367,60 @@ func resizeCmd(args []string) {
 // adapter.
 func permissionsCmd(args []string) {
 	fs := flag.NewFlagSet("permissions", flag.ExitOnError)
-	status := fs.Bool("status", false, "report current Accessibility trust state without triggering the macOS system prompt (read-only)")
+	status := fs.Bool("status", false, "report current permission state without triggering the macOS system prompt (read-only)")
 	asJSON := fs.Bool("json", false, "emit JSON instead of human-readable text (only valid with --status)")
+	screen := fs.Bool("screen", false, "operate on the Screen Recording permission (needed by screenshot) instead of Accessibility")
 	_ = fs.Parse(args)
 	if *asJSON && !*status {
 		fmt.Fprintln(os.Stderr, "windowctl permissions: --json requires --status")
 		os.Exit(2)
 	}
-	rc := runPermissions(os.Stdout, os.Stderr, runtime.GOOS, *status, *asJSON, windowctl.RequestAccessibility, windowctl.CheckAccessibility)
+	var rc int
+	if *screen {
+		rc = runScreenPermissions(os.Stdout, os.Stderr, runtime.GOOS, *status, *asJSON, windowctl.RequestScreenCapture, windowctl.CheckScreenCapture)
+	} else {
+		rc = runPermissions(os.Stdout, os.Stderr, runtime.GOOS, *status, *asJSON, windowctl.RequestAccessibility, windowctl.CheckAccessibility)
+	}
 	if rc != 0 {
 		os.Exit(rc)
 	}
+}
+
+// runScreenPermissions is the Screen Recording twin of runPermissions,
+// same platform-conditional shape: linux/windows have no comparable
+// gate ("not required"), darwin either checks silently (--status) or
+// requests with a possible one-time system prompt.
+func runScreenPermissions(stdout, stderr io.Writer, goos string, status, asJSON bool, requestFn func() error, checkFn func() bool) int {
+	if goos != "darwin" {
+		if asJSON && status {
+			_ = json.NewEncoder(stdout).Encode(map[string]bool{"granted": true})
+			return 0
+		}
+		fmt.Fprintf(stdout, "Screen Recording permission: not required on %s\n", goos)
+		return 0
+	}
+	if status {
+		granted := checkFn()
+		if asJSON {
+			_ = json.NewEncoder(stdout).Encode(map[string]bool{"granted": granted})
+			if granted {
+				return 0
+			}
+			return 1
+		}
+		if granted {
+			fmt.Fprintln(stdout, "Screen Recording permission: granted")
+			return 0
+		}
+		fmt.Fprintln(stderr, windowctl.ErrScreenCaptureDenied.Error())
+		return 1
+	}
+	if err := requestFn(); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	fmt.Fprintln(stdout, "Screen Recording permission: granted")
+	return 0
 }
 
 // runPermissions encapsulates the platform-conditional logic for the
