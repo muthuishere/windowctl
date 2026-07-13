@@ -26,3 +26,15 @@ verb's output and feed it to another without transformation.
 
 - **WHEN** `--monitor N` is supplied to a point-consuming verb (mouse/scroll/drag/coords)
 - **THEN** x/y are interpreted relative to monitor N's origin; absolute global otherwise.
+
+#### Scenario: Negative-origin monitors (display left of / above the primary)
+
+- **WHEN** the display arrangement places a monitor to the left of (or above) the primary,
+  giving it a negative global origin — e.g. a real 3-monitor Mac observed as
+  `monitor1 (-1728,0 1728x1117)`, `monitor2 (0,0 1920x1080 primary)`,
+  `monitor3 (1920,0 1920x1080)`, so the virtual desktop spans x ∈ [-1728, 3840]
+- **THEN** the global point space is signed and continuous across that whole range: a
+  capture whose origin `(ox,oy)` is negative still maps image pixel `(px,py)` to global
+  `(ox+px, oy+py)`, and `find --text` → `mouse click` round-trips on the negative-origin
+  monitor with no special-casing. Monitor IDs are 1-indexed by the adapter's sort order and
+  are NOT positional (id 1 may be the leftmost, negative-origin display).
