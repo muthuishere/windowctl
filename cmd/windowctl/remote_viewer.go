@@ -88,13 +88,23 @@ const ctl = document.getElementById('ctl');
 const status = document.getElementById('status');
 let originX = 0, originY = 0, natW = 0, natH = 0;
 let monitor = '';
+let mons = [];
+
+// Geometry for click mapping comes from /monitors (not per-frame
+// headers, which an MJPEG <img> stream can't expose to JS). Because
+// captures are point-normalized, a monitor's Width/Height IS the frame's
+// natural pixel size and its X/Y is the frame origin.
+function applyGeometry() {
+  const m = mons.find(x => String(x.ID) === String(monitor)) || mons[0];
+  if (m) { originX = m.X; originY = m.Y; natW = m.Width; natH = m.Height; }
+}
 
 async function loadMonitors() {
   try {
     const r = await fetch('/monitors?t=' + TOKEN);
-    const ms = await r.json();
+    mons = await r.json() || [];
     monSel.innerHTML = '';
-    (ms || []).forEach(m => {
+    mons.forEach(m => {
       const o = document.createElement('option');
       o.value = m.ID;
       o.textContent = 'Monitor ' + m.ID + ' (' + m.Width + '×' + m.Height + ')' + (m.Focused ? ' • focused' : '');
@@ -102,27 +112,20 @@ async function loadMonitors() {
       monSel.appendChild(o);
     });
     monitor = monSel.value || '';
-  } catch (e) { /* single-monitor / race — frame still works */ }
+    applyGeometry();
+  } catch (e) { /* single-monitor / race — stream still works */ }
 }
-monSel.addEventListener('change', () => { monitor = monSel.value; });
+monSel.addEventListener('change', () => { monitor = monSel.value; applyGeometry(); startStream(); });
 
-async function pullFrame() {
-  try {
-    const u = '/frame?t=' + TOKEN + (monitor ? '&monitor=' + monitor : '') + '&_=' + Date.now();
-    const r = await fetch(u);
-    if (!r.ok) { status.textContent = 'frame error: ' + r.status; return; }
-    originX = parseInt(r.headers.get('X-Origin-X') || '0', 10);
-    originY = parseInt(r.headers.get('X-Origin-Y') || '0', 10);
-    natW = parseInt(r.headers.get('X-Width') || '0', 10);
-    natH = parseInt(r.headers.get('X-Height') || '0', 10);
-    const blob = await r.blob();
-    const url = URL.createObjectURL(blob);
-    const old = img.src;
-    img.src = url;
-    if (old.startsWith('blob:')) URL.revokeObjectURL(old);
-    status.textContent = 'live • ' + natW + '×' + natH;
-  } catch (e) { status.textContent = 'disconnected'; }
+// Live MJPEG stream: the browser renders multipart/x-mixed-replace
+// natively in the <img>, so frames arrive pushed and continuous.
+function startStream() {
+  const u = '/stream?t=' + TOKEN + (monitor ? '&monitor=' + monitor : '') + '&_=' + Date.now();
+  img.src = u;
+  status.textContent = 'live • ' + natW + '×' + natH;
 }
+img.addEventListener('error', () => { status.textContent = 'reconnecting…'; setTimeout(startStream, 1000); });
+img.addEventListener('load', () => { if (natW) status.textContent = 'live • ' + natW + '×' + natH; });
 
 // toScreen maps a client (clientX, clientY) point — from either a mouse
 // event or a touch point — to the true screen coordinate, using the
@@ -143,7 +146,7 @@ async function send(action) {
       body: JSON.stringify(action),
     });
   } catch (e) {}
-  pullFrame();
+  // No manual refresh — the MJPEG stream updates the image continuously.
 }
 
 // --- Mouse control ---
@@ -252,8 +255,7 @@ document.addEventListener('keydown', ev => {
   send({ type: 'key', combo: mods.concat([key]).join('+') });
 });
 
-loadMonitors().then(pullFrame);
-setInterval(pullFrame, POLL);
+loadMonitors().then(startStream);
 </script>
 </body>
 </html>`

@@ -2,19 +2,21 @@
 // mouse/keyboard control through a temporary cloudflared tunnel.
 //
 // This is a thin transport layer over the public automation API
-// (Screenshot / MouseClick / TypeText / PressKey): a localhost HTTP
-// server renders a viewer page that polls PNG frames and forwards
-// clicks/keys back, and we spawn `cloudflared tunnel --url` to expose
-// it, printing the *.trycloudflare.com URL. It puts no new
+// (Screenshot / MouseClick / TypeText / PressKey): an HTTP server
+// streams the screen as live MJPEG (multipart/x-mixed-replace, JPEG
+// frames pushed continuously — far smoother than single-frame polling)
+// and forwards clicks/keys/touches back. It puts no new
 // window-management logic in the CLI — the library still owns every
 // primitive.
 //
 // Security model (deliberate, because this grants desktop control to
-// whoever opens the URL): the server binds 127.0.0.1 only, mints a
-// fresh random token per run, and rejects every request without it.
-// The token rides in the URL we print, so the link IS the key — share
-// it like a house key and stop the server (Ctrl-C) to revoke. cloudflared
-// terminates TLS and proxies to localhost; the token gates access.
+// whoever opens the URL): the server mints a fresh random token per run
+// and rejects every request without it. The token rides in the URL we
+// print, so the link IS the key — share it like a house key and stop
+// the server (Ctrl-C) to revoke. By default it binds all interfaces so
+// LAN devices (a phone, another laptop) can reach it directly; the
+// token, not the bind address, is what gates access. `--tunnel` also
+// spawns cloudflared for a public *.trycloudflare.com URL.
 package main
 
 import (
@@ -26,8 +28,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image/jpeg"
+	"image/png"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"net/textproto"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -44,14 +50,14 @@ func remoteCmd(args []string) {
 	monitor := fs.Int("monitor", 0, "monitor to share by default (>=1; omit for the focused one)")
 	port := fs.Int("port", 0, "localhost port to bind (0 = pick a free one)")
 	tunnel := fs.Bool("tunnel", false, "also expose a public URL via cloudflared (default: local URL only)")
-	fps := fs.Float64("fps", 2, "max frames per second the viewer polls (1-10)")
+	fps := fs.Float64("fps", 10, "target frames per second for the live stream (1-30)")
 	_ = fs.Parse(args)
 
 	if *fps < 1 {
 		*fps = 1
 	}
-	if *fps > 10 {
-		*fps = 10
+	if *fps > 30 {
+		*fps = 30
 	}
 	monitorID, err := monitorIDFromFlag(fs, monitor)
 	if err != nil {
@@ -108,6 +114,7 @@ func (s *remoteServer) run(port int, withTunnel bool) int {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.auth(s.handleIndex))
+	mux.HandleFunc("/stream", s.auth(s.handleStream))
 	mux.HandleFunc("/frame", s.auth(s.handleFrame))
 	mux.HandleFunc("/monitors", s.auth(s.handleMonitors))
 	mux.HandleFunc("/input", s.auth(s.handleInput))
@@ -218,17 +225,121 @@ func (s *remoteServer) handleMonitors(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(ms)
 }
 
-// handleFrame captures the requested monitor and streams the PNG. The
-// captured rect's global origin rides in headers so the viewer can map
-// an image-pixel click back to a global coordinate (screenshots are
-// point-normalized: origin + pixel == global point).
-func (s *remoteServer) handleFrame(w http.ResponseWriter, r *http.Request) {
+func (s *remoteServer) monitorFromQuery(r *http.Request) *int {
 	monitorID := s.defaultMonitor
 	if q := r.URL.Query().Get("monitor"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil && n >= 1 {
 			monitorID = &n
 		}
 	}
+	return monitorID
+}
+
+// captureJPEG captures the monitor to a JPEG (via the PNG the adapter
+// writes, decoded and re-encoded). tmpPath is reused across a stream's
+// frames so we don't churn temp files. quality is the JPEG quality
+// (1-100). Returns the encoded bytes and the captured rect.
+func (s *remoteServer) captureJPEG(monitorID *int, tmpPath string, quality int, buf *bytes.Buffer) (windowctl.Rect, error) {
+	s.screenshotMu.Lock()
+	rect, err := windowctl.Screenshot(windowctl.ScreenshotOptions{Monitor: monitorID, OutPath: tmpPath})
+	s.screenshotMu.Unlock()
+	if err != nil {
+		return windowctl.Rect{}, err
+	}
+	raw, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return windowctl.Rect{}, err
+	}
+	img, err := png.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return windowctl.Rect{}, err
+	}
+	buf.Reset()
+	if err := jpeg.Encode(buf, img, &jpeg.Options{Quality: quality}); err != nil {
+		return windowctl.Rect{}, err
+	}
+	return rect, nil
+}
+
+// handleStream is the live path: an MJPEG (multipart/x-mixed-replace)
+// stream the browser renders natively in an <img>. This is what makes
+// it feel live instead of the 2fps single-frame poll — frames are
+// pushed continuously as JPEG (far smaller + faster than PNG) until the
+// client disconnects. The viewer reads geometry from /monitors, so no
+// per-frame headers are needed here.
+func (s *remoteServer) handleStream(w http.ResponseWriter, r *http.Request) {
+	monitorID := s.monitorFromQuery(r)
+	quality := 60
+	if q := r.URL.Query().Get("q"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n >= 10 && n <= 95 {
+			quality = n
+		}
+	}
+	interval := s.frameInterval
+	if q := r.URL.Query().Get("fps"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n >= 1 && n <= 30 {
+			interval = time.Second / time.Duration(n)
+		}
+	}
+
+	tmp, err := os.CreateTemp("", "windowctl-stream-*.png")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpPath := tmp.Name()
+	_ = tmp.Close()
+	defer os.Remove(tmpPath)
+
+	mw := multipart.NewWriter(w)
+	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary="+mw.Boundary())
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "close")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, _ := w.(http.Flusher)
+	var buf bytes.Buffer
+	ctx := r.Context()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		rect, err := s.captureJPEG(monitorID, tmpPath, quality, &buf)
+		if err != nil {
+			return // client will retry the stream; a transient capture error ends this one
+		}
+		hdr := make(textproto.MIMEHeader)
+		hdr.Set("Content-Type", "image/jpeg")
+		hdr.Set("Content-Length", strconv.Itoa(buf.Len()))
+		hdr.Set("X-Origin-X", strconv.Itoa(rect.X))
+		hdr.Set("X-Origin-Y", strconv.Itoa(rect.Y))
+		hdr.Set("X-Width", strconv.Itoa(rect.W))
+		hdr.Set("X-Height", strconv.Itoa(rect.H))
+		part, err := mw.CreatePart(hdr)
+		if err != nil {
+			return
+		}
+		if _, err := part.Write(buf.Bytes()); err != nil {
+			return
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// handleFrame captures the requested monitor and streams the PNG. The
+// captured rect's global origin rides in headers so the viewer can map
+// an image-pixel click back to a global coordinate (screenshots are
+// point-normalized: origin + pixel == global point). Kept as a
+// single-frame fallback for clients that can't render MJPEG.
+func (s *remoteServer) handleFrame(w http.ResponseWriter, r *http.Request) {
+	monitorID := s.monitorFromQuery(r)
 
 	tmp, err := os.CreateTemp("", "windowctl-remote-*.png")
 	if err != nil {
