@@ -243,7 +243,35 @@ A declarative YAML file describing how multiple windows should be arranged acros
 - Removes the bundled `window-ctl-skill` from the same target directories as install
 - Missing installs are treated as a no-op, not an error
 
-### 5.7 Output Modes
+### 5.7 CLI — Desktop Automation
+
+#### FR-SHOT-01: Screenshot
+
+- **Command**: `windowctl screenshot [--monitor <n>] [--x --y --w --h] [--title <s> | --app <s>] [--out <path>] [--json]`
+- Captures a monitor (default: the focused one, falling back to primary), an explicit region (monitor-relative when `--monitor` is set, absolute otherwise — same rule as FR-MOV-02), or a matched window's bounds, to a PNG
+- The written image is **point-normalized**: 1 image pixel == 1 global coordinate point even on HiDPI/retina displays, so pixel positions read off the image translate to click coordinates as `global = capturedRect.origin + imagePixel`
+- Output reports the captured rect (origin + size); `--json` shape: `{Path, X, Y, Width, Height}`
+- macOS requires the Screen Recording TCC permission (separate from Accessibility); denial returns the actionable `ErrScreenCaptureDenied` message pointing at `windowctl permissions --screen`
+
+#### FR-INP-01: Mouse Control
+
+- **Commands**: `windowctl mouse move --x --y [--monitor <n>]`, `windowctl mouse click [--x --y] [--monitor <n>] [--right|--middle] [--double]`, `windowctl mouse position [--json]`
+- Coordinates follow the FR-MOV-02 monitor-relative rule; `click` without coords clicks at the current cursor position
+- Native event synthesis: CGEvent (macOS, requires Accessibility), SendInput/SetCursorPos (Windows), xdotool (Linux)
+
+#### FR-INP-02: Keyboard Input
+
+- **Commands**: `windowctl type --text <s> [--title <s> | --app <s>]`, `windowctl key --combo <s> [--title <s> | --app <s>]`
+- `type` injects literal unicode (layout/IME-independent); `key` presses one chord parsed from `+`-separated modifiers (`cmd|command|meta|super|win`, `ctrl|control`, `alt|opt|option`, `shift`) plus a key (single char, `f1..f12`, or named: enter/tab/esc/space/arrows/delete/backspace/home/end/pageup/pagedown)
+- **Focus guard**: with `--title`/`--app` the command focuses the matched window and polls until the window list reports it `Focused` before injecting anything; if focus does not land within 2s it errors with input NOT sent. Without a filter, input goes to whatever is focused (caller beware — a window created milliseconds ago may not yet own the keyboard). On platforms that cannot report per-monitor focus (linux) the guard degrades to trusting Focus()
+
+#### FR-INP-03: Launch and Wait
+
+- **Commands**: `windowctl launch --app <s>`, `windowctl wait (--title <s> | --app <s>) [--timeout <ms>] [--json]`
+- `launch` hands off to the OS launcher (`open -a` / `cmd /c start` / direct exec) and returns immediately; `wait` polls the window list (250ms interval) until a window matches or the timeout (default 10000ms) elapses, then prints the matched window
+- `wait` matches **pre-existing** windows too — callers that need "the NEW window" must snapshot the window list before launching and compare
+
+### 5.8 Output Modes
 
 #### FR-OUT-01: Table Output (default)
 
@@ -334,6 +362,7 @@ func Focus(match Match) error
 ### 8.2 Security
 
 - macOS: Accessibility permissions must be requested at runtime with a clear error if denied
+- macOS: Screen Recording is a separate TCC permission gating `screenshot`; checked/requested via `windowctl permissions --screen [--status]`, same clear-error contract
 - Windows: Operations requiring elevated privileges must fail gracefully with a descriptive error
 - Linux: Behavior depends on display server; no special handling required beyond clear error messages
 
