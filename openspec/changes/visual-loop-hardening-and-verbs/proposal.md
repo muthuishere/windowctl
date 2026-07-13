@@ -39,7 +39,15 @@ New CLI verbs + library functions, all behind the existing three-layer architect
   change land.
 - **Coordinate contract, documented precisely** — one authoritative doc covering the
   global point space, the retina 1 px == 1 pt capture guarantee, the monitor-relative
-  rule, and the Vision normalized→point transform.
+  rule, the Vision normalized→point transform, and negative-origin (left-of-primary)
+  multi-monitor arrangements.
+- **`windowctl recipe save|list|run`** — persist and replay named, parameterized ($VAR)
+  sequences of the visual primitives, scoped to a window match, stored in
+  `~/.config/windowctl/recipes.json` with embedded seeds (`youtube-comment`, `x-compose`).
+  Vision-first with coordinate + clipboard-paste fallbacks; **safe-by-default** — the final
+  submit/publish step is `confirm`-gated and skipped unless `--confirm` is passed. This is
+  the visual twin of a browser-bridge DOM recipe: windowctl = visual writes into ANY app,
+  browser-bridge = DOM reads.
 - **Receipts** — the visual-loop flow (and each new verb) can emit one JSON receipt line.
 
 ## Impact
