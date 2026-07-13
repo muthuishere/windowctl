@@ -92,13 +92,19 @@ func mustToken() string {
 }
 
 func (s *remoteServer) run(port int, withTunnel bool) int {
-	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	// Bind all interfaces so other devices on the LAN can reach the
+	// viewer by default (phones, another laptop) — the token gate is
+	// what protects it, not the bind address. cloudflared (--tunnel)
+	// stays an explicit opt-in for going beyond the LAN.
+	ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "windowctl remote: cannot bind localhost:", err)
+		fmt.Fprintln(os.Stderr, "windowctl remote: cannot bind port:", err)
 		return 1
 	}
 	actualPort := ln.Addr().(*net.TCPAddr).Port
-	localURL := fmt.Sprintf("http://127.0.0.1:%d/?t=%s", actualPort, s.token)
+	lanIP := lanIP()
+	lanURL := fmt.Sprintf("http://%s:%d/?t=%s", lanIP, actualPort, s.token)
+	loopbackURL := fmt.Sprintf("http://127.0.0.1:%d/?t=%s", actualPort, s.token)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.auth(s.handleIndex))
@@ -116,8 +122,10 @@ func (s *remoteServer) run(port int, withTunnel bool) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	fmt.Println("windowctl remote — screen share + CONTROL is live on this machine.")
-	fmt.Printf("  Open this link (it carries the access token):\n\n    %s\n\n", localURL)
+	fmt.Println("windowctl remote — screen share + CONTROL is live.")
+	fmt.Println("  Open from another device on your network (the link carries the access token):")
+	fmt.Printf("\n    %s\n\n", lanURL)
+	fmt.Printf("  On this machine: %s\n\n", loopbackURL)
 
 	var tunnel *exec.Cmd
 	if withTunnel {
@@ -141,6 +149,18 @@ func (s *remoteServer) run(port int, withTunnel bool) int {
 		_ = tunnel.Wait()
 	}
 	return 0
+}
+
+// lanIP returns the machine's primary LAN IPv4 by opening a UDP socket
+// toward a public address and reading the local address the OS picked
+// (no packets are sent). Falls back to 127.0.0.1 when offline.
+func lanIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "127.0.0.1"
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
 // startTunnel spawns cloudflared and waits for it to print the public
