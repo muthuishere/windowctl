@@ -20,12 +20,21 @@ type (
 	Adapter     = core.Adapter
 	MouseButton = core.MouseButton
 	Chord       = core.Chord
+	TextMatch   = core.TextMatch
+	WindowOp    = core.WindowOp
 )
 
 const (
 	MouseLeft   = core.MouseLeft
 	MouseRight  = core.MouseRight
 	MouseMiddle = core.MouseMiddle
+)
+
+const (
+	WindowMinimize   = core.WindowMinimize
+	WindowMaximize   = core.WindowMaximize
+	WindowFullscreen = core.WindowFullscreen
+	WindowClose      = core.WindowClose
 )
 
 var (

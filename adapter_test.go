@@ -33,6 +33,20 @@ type mockAdapter struct {
 	typedText    string
 	pressedChord *Chord
 	launchedApp  string
+
+	findRect      Rect
+	findMatches   []TextMatch
+	findErr       error
+	clipboard     string
+	clipboardErr  error
+	setClipboard  *string
+	scrolledAt    *[2]int
+	scrollDelta   *[2]int
+	draggedFrom   *[2]int
+	draggedTo     *[2]int
+	dragButton    MouseButton
+	windowStateOp *WindowOp
+	windowStateID string
 }
 
 func (m *mockAdapter) ListWindows() ([]Window, error)  { return m.windows, m.listErr }
@@ -95,6 +109,32 @@ func (m *mockAdapter) Launch(app string) error {
 }
 func (m *mockAdapter) CheckScreenCapture() bool    { return true }
 func (m *mockAdapter) RequestScreenCapture() error { return nil }
+func (m *mockAdapter) FindText(rect Rect) ([]TextMatch, error) {
+	m.findRect = rect
+	return m.findMatches, m.findErr
+}
+func (m *mockAdapter) Clipboard() (string, error) { return m.clipboard, m.clipboardErr }
+func (m *mockAdapter) SetClipboard(text string) error {
+	m.setClipboard = &text
+	m.clipboard = text
+	return nil
+}
+func (m *mockAdapter) Scroll(x, y, dx, dy int) error {
+	m.scrolledAt = &[2]int{x, y}
+	m.scrollDelta = &[2]int{dx, dy}
+	return nil
+}
+func (m *mockAdapter) Drag(fromX, fromY, toX, toY int, button MouseButton) error {
+	m.draggedFrom = &[2]int{fromX, fromY}
+	m.draggedTo = &[2]int{toX, toY}
+	m.dragButton = button
+	return nil
+}
+func (m *mockAdapter) WindowState(id string, op WindowOp) error {
+	m.windowStateID = id
+	m.windowStateOp = &op
+	return nil
+}
 
 func sampleWindows() []Window {
 	return []Window{
