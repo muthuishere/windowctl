@@ -3,6 +3,8 @@ package windowctl
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -138,6 +140,27 @@ func pressKeyIntoWith(a Adapter, match Match, combo string) error {
 // window system to report the matched window as focused.
 const focusVerifyTimeout = 2 * time.Second
 
+// defaultFocusSettleMS is a short pause AFTER the window system reports
+// the target focused, before the first keystroke is injected. Live
+// testing on macOS reproduced dropped leading characters when typing
+// fires in the same tick focus transfers: the window is "focused" but
+// its text view has not finished becoming first responder. A brief
+// settle absorbs that race. Override with WCTL_FOCUS_SETTLE_MS (0
+// disables); the value is read per call so it's tunable without a
+// rebuild.
+const defaultFocusSettleMS = 120
+
+// focusSettleDuration reads WCTL_FOCUS_SETTLE_MS, falling back to
+// defaultFocusSettleMS. A malformed or negative value falls back too.
+func focusSettleDuration() time.Duration {
+	if v, ok := os.LookupEnv("WCTL_FOCUS_SETTLE_MS"); ok {
+		if ms, err := strconv.Atoi(v); err == nil && ms >= 0 {
+			return msDuration(ms)
+		}
+	}
+	return msDuration(defaultFocusSettleMS)
+}
+
 // ensureFocused raises the matched window and blocks until the window
 // list reports it Focused. On platforms whose adapter cannot say which
 // monitor holds focus (no Monitor.Focused flag — linux today) the
@@ -159,6 +182,9 @@ func ensureFocused(a Adapter, match Match) error {
 		}
 	}
 	if !verifiable {
+		// Can't verify focus landed; still settle so the first
+		// keystrokes after Focus() don't race the responder change.
+		sleepFn(focusSettleDuration())
 		return nil
 	}
 	deadline := nowFn().Add(focusVerifyTimeout)
@@ -169,6 +195,7 @@ func ensureFocused(a Adapter, match Match) error {
 		}
 		for _, w := range ws {
 			if w.Focused {
+				sleepFn(focusSettleDuration())
 				return nil
 			}
 		}

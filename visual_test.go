@@ -1,6 +1,48 @@
 package windowctl
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+// ensureFocused settles for the configured duration AFTER the window
+// reports focused, so the first keystrokes don't race the responder
+// change. WCTL_FOCUS_SETTLE_MS overrides the default.
+func TestFocusSettleAppliedAfterFocusConfirmed(t *testing.T) {
+	a := newAutomationAdapter()
+	a.monitors[0].Focused = true
+	a.monitors[1].Focused = false
+
+	oldSleep := sleepFn
+	var slept []time.Duration
+	sleepFn = func(d time.Duration) { slept = append(slept, d) }
+	defer func() { sleepFn = oldSleep }()
+
+	t.Setenv("WCTL_FOCUS_SETTLE_MS", "42")
+	if err := ensureFocused(a, Match{App: "google chrome"}); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, d := range slept {
+		if d == 42*time.Millisecond {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a 42ms settle sleep, got %v", slept)
+	}
+}
+
+func TestFocusSettleDurationParsing(t *testing.T) {
+	t.Setenv("WCTL_FOCUS_SETTLE_MS", "0")
+	if got := focusSettleDuration(); got != 0 {
+		t.Fatalf("0 should disable settle, got %v", got)
+	}
+	t.Setenv("WCTL_FOCUS_SETTLE_MS", "garbage")
+	if got := focusSettleDuration(); got != defaultFocusSettleMS*time.Millisecond {
+		t.Fatalf("malformed value should fall back to default, got %v", got)
+	}
+}
 
 // FindText resolves its scope through the same resolver as Screenshot,
 // filters by case-insensitive substring, and sorts by confidence.
