@@ -163,6 +163,7 @@ If the session ends, the skill re-lists.
    - Bulk-place / save / restore a layout (`windowctl batch`) → `references/batch.md`
    - Focus / raise a window → `references/focus.md`
    - Screenshot / mouse / type / key / launch / wait (automate the UI, the visual loop) → `references/automation.md`
+   - Find on-screen text by OCR → click / scroll / drag / clipboard / minimize|maximize|fullscreen|close / **replayable recipes** (the visual WRITE rail) → `references/visual-write.md`
    - macOS Accessibility prompts + AX-bridge debugging → `references/permissions.md`
    - Composite layouts ("split chrome + slack 50/50") → `references/recipes.md`
 3. Need a zone refresher? → `references/zones.md` (cheatsheet for 1A..2D
@@ -194,6 +195,7 @@ Zero-exit means the catalogue is internally consistent and installable.
 | Batch (bulk-apply / save / restore layouts) | `references/batch.md` |
 | Focus (raise + activate, "this window" via Focused) | `references/focus.md` |
 | Automation (screenshot, mouse, type, key, launch, wait — the visual loop) | `references/automation.md` |
+| Visual write rail (find/OCR, scroll, drag, clipboard, window-state verbs, recipes) | `references/visual-write.md` |
 | Permissions (macOS Accessibility + Screen Recording, `WCTL_AX_DEBUG`) | `references/permissions.md` |
 | Zones (1A..2D + N:M cheatsheet) | `references/zones.md` |
 | Composite layouts | `references/recipes.md` |
