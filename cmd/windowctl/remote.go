@@ -69,6 +69,7 @@ func remoteCmd(args []string) {
 		defaultMonitor: monitorID,
 		token:          mustToken(),
 		frameInterval:  time.Duration(float64(time.Second) / *fps),
+		quality:        60,
 	}
 	if rc := srv.run(*port, *tunnel); rc != 0 {
 		os.Exit(rc)
@@ -79,11 +80,138 @@ type remoteServer struct {
 	defaultMonitor *int
 	token          string
 	frameInterval  time.Duration
+	quality        int
 
 	// screenshotMu serializes captures — the darwin capture path and
-	// the temp-file it writes are not safe to run concurrently across
-	// many polling viewers.
+	// its temp file are not concurrency-safe. With the shared feeds
+	// below only one capture runs per monitor; the lock still guards
+	// concurrent feeds for different monitors and the /frame fallback.
 	screenshotMu sync.Mutex
+
+	// feeds holds one shared capture loop per monitor, keyed by the
+	// monitor query value ("" = default/focused). Every viewer of a
+	// given monitor subscribes to the SAME feed rather than starting
+	// its own capture — so N tabs / devices / reconnects of one monitor
+	// never spin up N contending capture loops (which would thrash the
+	// screenshot lock and cut everyone's framerate).
+	feedsMu sync.Mutex
+	feeds   map[string]*monitorFeed
+}
+
+// monitorFeed is a single shared capture loop for one monitor. Its
+// latest JPEG frame is broadcast to all subscribers via cond. It is
+// reference-counted: the loop starts on the first subscriber and stops
+// when the last one leaves.
+type monitorFeed struct {
+	key       string
+	monitorID *int
+	srv       *remoteServer
+
+	mu      sync.Mutex
+	cond    *sync.Cond
+	latest  []byte
+	rect    windowctl.Rect
+	seq     uint64 // bumped per new frame; 0 = none captured yet
+	refs    int
+	stopped bool
+	err     error
+}
+
+// acquireFeed returns the shared feed for a monitor key, starting its
+// capture loop on first use, and increments the refcount.
+func (s *remoteServer) acquireFeed(key string, monitorID *int) *monitorFeed {
+	s.feedsMu.Lock()
+	defer s.feedsMu.Unlock()
+	if s.feeds == nil {
+		s.feeds = map[string]*monitorFeed{}
+	}
+	f, ok := s.feeds[key]
+	if !ok {
+		f = &monitorFeed{key: key, monitorID: monitorID, srv: s}
+		f.cond = sync.NewCond(&f.mu)
+		s.feeds[key] = f
+		go f.captureLoop()
+	}
+	f.refs++
+	return f
+}
+
+// releaseFeed drops a subscriber; when the last leaves it stops the
+// capture loop (and wakes any straggler waiter so none block forever).
+func (s *remoteServer) releaseFeed(f *monitorFeed) {
+	s.feedsMu.Lock()
+	last := false
+	f.refs--
+	if f.refs <= 0 {
+		delete(s.feeds, f.key)
+		last = true
+	}
+	s.feedsMu.Unlock()
+	if last {
+		f.mu.Lock()
+		f.stopped = true
+		f.cond.Broadcast()
+		f.mu.Unlock()
+	}
+}
+
+// captureLoop captures the monitor at the server frame interval and
+// broadcasts each new frame. It exits once the feed is marked stopped.
+func (f *monitorFeed) captureLoop() {
+	tmp, err := os.CreateTemp("", "windowctl-feed-*.png")
+	if err != nil {
+		f.mu.Lock()
+		f.err = err
+		f.cond.Broadcast()
+		f.mu.Unlock()
+		return
+	}
+	tmpPath := tmp.Name()
+	_ = tmp.Close()
+	defer os.Remove(tmpPath)
+
+	var buf bytes.Buffer
+	ticker := time.NewTicker(f.srv.frameInterval)
+	defer ticker.Stop()
+	for {
+		rect, cerr := f.srv.captureJPEG(f.monitorID, tmpPath, f.srv.quality, &buf)
+		f.mu.Lock()
+		if f.stopped {
+			f.mu.Unlock()
+			return
+		}
+		if cerr != nil {
+			f.err = cerr
+		} else {
+			f.err = nil
+			f.latest = append(f.latest[:0], buf.Bytes()...)
+			f.rect = rect
+			f.seq++
+		}
+		f.cond.Broadcast()
+		f.mu.Unlock()
+		<-ticker.C
+	}
+}
+
+// waitNext blocks until a frame newer than lastSeq exists (or the feed
+// stops / errors), returning a copy of the frame, its rect, and the new
+// seq. A stopped feed returns http.ErrServerClosed.
+func (f *monitorFeed) waitNext(lastSeq uint64) ([]byte, windowctl.Rect, uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for f.seq == lastSeq && f.err == nil && !f.stopped {
+		f.cond.Wait()
+	}
+	if f.stopped {
+		return nil, windowctl.Rect{}, lastSeq, http.ErrServerClosed
+	}
+	if f.err != nil && f.seq == lastSeq {
+		return nil, windowctl.Rect{}, lastSeq, f.err
+	}
+	frame := make([]byte, len(f.latest))
+	copy(frame, f.latest)
+	return frame, f.rect, f.seq, nil
 }
 
 func mustToken() string {
@@ -262,34 +390,17 @@ func (s *remoteServer) captureJPEG(monitorID *int, tmpPath string, quality int, 
 }
 
 // handleStream is the live path: an MJPEG (multipart/x-mixed-replace)
-// stream the browser renders natively in an <img>. This is what makes
-// it feel live instead of the 2fps single-frame poll — frames are
-// pushed continuously as JPEG (far smaller + faster than PNG) until the
-// client disconnects. The viewer reads geometry from /monitors, so no
-// per-frame headers are needed here.
+// stream the browser renders natively in an <img>. It subscribes to the
+// SHARED per-monitor feed (acquireFeed) instead of capturing on its own,
+// so any number of viewers of one monitor read a single capture loop —
+// each frame captured once and fanned out. Geometry rides in per-part
+// headers. The viewer also reads geometry from /monitors as a fallback.
 func (s *remoteServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	monitorID := s.monitorFromQuery(r)
-	quality := 60
-	if q := r.URL.Query().Get("q"); q != "" {
-		if n, err := strconv.Atoi(q); err == nil && n >= 10 && n <= 95 {
-			quality = n
-		}
-	}
-	interval := s.frameInterval
-	if q := r.URL.Query().Get("fps"); q != "" {
-		if n, err := strconv.Atoi(q); err == nil && n >= 1 && n <= 30 {
-			interval = time.Second / time.Duration(n)
-		}
-	}
+	key := r.URL.Query().Get("monitor") // "" == default/focused
 
-	tmp, err := os.CreateTemp("", "windowctl-stream-*.png")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	tmpPath := tmp.Name()
-	_ = tmp.Close()
-	defer os.Remove(tmpPath)
+	feed := s.acquireFeed(key, monitorID)
+	defer s.releaseFeed(feed)
 
 	mw := multipart.NewWriter(w)
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary="+mw.Boundary())
@@ -298,19 +409,21 @@ func (s *remoteServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	flusher, _ := w.(http.Flusher)
-	var buf bytes.Buffer
 	ctx := r.Context()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	var lastSeq uint64
 
 	for {
-		rect, err := s.captureJPEG(monitorID, tmpPath, quality, &buf)
-		if err != nil {
-			return // client will retry the stream; a transient capture error ends this one
+		if ctx.Err() != nil {
+			return
 		}
+		frame, rect, seq, err := feed.waitNext(lastSeq)
+		if err != nil {
+			return
+		}
+		lastSeq = seq
 		hdr := make(textproto.MIMEHeader)
 		hdr.Set("Content-Type", "image/jpeg")
-		hdr.Set("Content-Length", strconv.Itoa(buf.Len()))
+		hdr.Set("Content-Length", strconv.Itoa(len(frame)))
 		hdr.Set("X-Origin-X", strconv.Itoa(rect.X))
 		hdr.Set("X-Origin-Y", strconv.Itoa(rect.Y))
 		hdr.Set("X-Width", strconv.Itoa(rect.W))
@@ -319,16 +432,11 @@ func (s *remoteServer) handleStream(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		if _, err := part.Write(buf.Bytes()); err != nil {
+		if _, err := part.Write(frame); err != nil {
 			return
 		}
 		if flusher != nil {
 			flusher.Flush()
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
 		}
 	}
 }
