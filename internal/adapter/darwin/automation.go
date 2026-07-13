@@ -172,8 +172,58 @@ static int wctl_type_chunk(const UniChar *chars, int len) {
     CGEventKeyboardSetUnicodeString(down, len, chars);
     CGEventKeyboardSetUnicodeString(up, len, chars);
     CGEventPost(kCGHIDEventTap, down);
+    // Pace the down->up pair (matching wctl_press_chord's 10ms gap).
+    // Posting the key-up in the same run-loop tick as the key-down makes
+    // slow/transitioning first responders drop the character; a small
+    // gap makes the synthetic keystroke look like real hardware. Best
+    // practice for CGEventKeyboardSetUnicodeString (kulman, isamert).
+    usleep(10000);
     CGEventPost(kCGHIDEventTap, up);
     CFRelease(down);
+    CFRelease(up);
+    return WCTL_AUTO_OK;
+}
+
+// Wheel scroll: dy vertical lines, dx horizontal lines, at the current
+// cursor location (caller moves the cursor first). Line units keep the
+// amount app-agnostic.
+static int wctl_scroll(int dx, int dy) {
+    CGEventRef e = CGEventCreateScrollWheelEvent(
+        NULL, kCGScrollEventUnitLine, 2, (int32_t)dy, (int32_t)dx);
+    if (!e) return WCTL_AUTO_INTERNAL;
+    CGEventPost(kCGHIDEventTap, e);
+    CFRelease(e);
+    return WCTL_AUTO_OK;
+}
+
+// Press button at (fx,fy), move through interpolated drag points, release
+// at (tx,ty). Interpolation matters: apps register a continuous drag, not
+// a teleport. button: 0 left, 1 right, 2 middle.
+static int wctl_drag(double fx, double fy, double tx, double ty, int button) {
+    CGEventType dt, ut, drag;
+    CGMouseButton mb;
+    switch (button) {
+    case 1:  dt = kCGEventRightMouseDown; ut = kCGEventRightMouseUp; drag = kCGEventRightMouseDragged; mb = kCGMouseButtonRight;  break;
+    case 2:  dt = kCGEventOtherMouseDown; ut = kCGEventOtherMouseUp; drag = kCGEventOtherMouseDragged; mb = kCGMouseButtonCenter; break;
+    default: dt = kCGEventLeftMouseDown;  ut = kCGEventLeftMouseUp;  drag = kCGEventLeftMouseDragged;  mb = kCGMouseButtonLeft;   break;
+    }
+    CGEventRef down = CGEventCreateMouseEvent(NULL, dt, CGPointMake(fx, fy), mb);
+    if (!down) return WCTL_AUTO_INTERNAL;
+    CGEventPost(kCGHIDEventTap, down);
+    CFRelease(down);
+    usleep(20000);
+    const int steps = 12;
+    for (int i = 1; i <= steps; i++) {
+        double t = (double)i / steps;
+        double x = fx + (tx - fx) * t;
+        double y = fy + (ty - fy) * t;
+        CGEventRef mv = CGEventCreateMouseEvent(NULL, drag, CGPointMake(x, y), mb);
+        if (mv) { CGEventPost(kCGHIDEventTap, mv); CFRelease(mv); }
+        usleep(12000);
+    }
+    CGEventRef up = CGEventCreateMouseEvent(NULL, ut, CGPointMake(tx, ty), mb);
+    if (!up) return WCTL_AUTO_INTERNAL;
+    CGEventPost(kCGHIDEventTap, up);
     CFRelease(up);
     return WCTL_AUTO_OK;
 }
@@ -345,6 +395,33 @@ func boolToC(b bool) C.int {
 		return 1
 	}
 	return 0
+}
+
+// Scroll moves the cursor to (x,y) then emits wheel events (dx/dy lines).
+func (a *Adapter) Scroll(x, y, dx, dy int) error {
+	if err := inputAXGuard(); err != nil {
+		return err
+	}
+	if rc := C.wctl_mouse_move(C.double(x), C.double(y)); rc != 0 {
+		return fmt.Errorf("scroll move failed (CGEvent rc=%d)", int(rc))
+	}
+	if rc := C.wctl_scroll(C.int(dx), C.int(dy)); rc != 0 {
+		return fmt.Errorf("scroll failed (CGEvent rc=%d)", int(rc))
+	}
+	return nil
+}
+
+// Drag presses button at from, interpolates to, releases.
+func (a *Adapter) Drag(fromX, fromY, toX, toY int, button core.MouseButton) error {
+	if err := inputAXGuard(); err != nil {
+		return err
+	}
+	rc := C.wctl_drag(C.double(fromX), C.double(fromY),
+		C.double(toX), C.double(toY), C.int(button))
+	if rc != 0 {
+		return fmt.Errorf("drag failed (CGEvent rc=%d)", int(rc))
+	}
+	return nil
 }
 
 func (a *Adapter) Launch(app string) error {

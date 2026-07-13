@@ -103,6 +103,31 @@ type Adapter interface {
 	// windows (true / nil).
 	CheckScreenCapture() bool
 	RequestScreenCapture() error
+
+	// FindText runs native on-screen OCR over the given global rect and
+	// returns one TextMatch per recognized line, with bounds/click in
+	// absolute global points. Returns ErrScreenCaptureDenied without the
+	// Screen Recording permission, ErrNotImplemented where no native OCR
+	// path exists. Substring filtering/sorting is done by the caller.
+	FindText(rect Rect) ([]TextMatch, error)
+
+	// Clipboard / SetClipboard read and write the system clipboard's
+	// text. The reliable, layout-independent path for inserting text
+	// (set + paste) versus synthetic typing.
+	Clipboard() (string, error)
+	SetClipboard(text string) error
+
+	// Scroll emits wheel events (dx horizontal, dy vertical lines) after
+	// moving the cursor to (x,y). Drag presses button at from, moves
+	// through interpolated points, and releases at to. Both require
+	// Accessibility trust on macOS.
+	Scroll(x, y, dx, dy int) error
+	Drag(fromX, fromY, toX, toY int, button MouseButton) error
+
+	// WindowState applies a WindowOp (minimize/maximize/fullscreen/
+	// close) to the window with the given adapter window ID. Returns
+	// ErrAccessibilityDenied without trust on macOS.
+	WindowState(windowID string, op WindowOp) error
 }
 
 // MouseButton identifies which button MouseClick presses.
