@@ -29,7 +29,7 @@ passes=0
 pass() { green "  OK  $*"; passes=$((passes+1)); }
 fail() { red   "  FAIL $*"; fails=$((fails+1)); }
 
-REF_FILES=(windows.md monitors.md move.md resize.md batch.md focus.md permissions.md zones.md recipes.md)
+REF_FILES=(windows.md monitors.md move.md resize.md batch.md focus.md automation.md permissions.md zones.md recipes.md)
 
 # 1. SKILL.md frontmatter
 hdr "SKILL.md frontmatter"
@@ -112,7 +112,7 @@ fi
 
 # 6. recipes.md only invokes known subcommands
 hdr "recipes.md subcommand whitelist"
-KNOWN_RE='^(windows|monitors|move|focus|permissions|resize|batch)$'
+KNOWN_RE='^(windows|monitors|move|focus|permissions|resize|batch|screenshot|mouse|type|key|launch|wait)$'
 bad=$(grep -E '^[[:space:]]*windowctl ' "$REF_DIR/recipes.md" 2>/dev/null \
   | sed -E 's/.*windowctl[[:space:]]+([a-z]+).*/\1/' \
   | sort -u \

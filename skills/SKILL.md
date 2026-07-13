@@ -6,22 +6,30 @@ description: >
   FOCUSED window), move a window into a predefined zone (1A, 1B,
   2A..2D), an N:M split, or absolute / monitor-relative coordinates,
   resize a window in place, focus a window, **bulk-apply a layout of
-  many windows in one call (`windowctl batch`)**, and request the
-  macOS Accessibility permission needed for move / resize / focus /
-  batch. Trigger on: list windows, show open windows, what windows do
-  I have, list monitors, show displays, which monitor is active,
-  where's my cursor, which monitor has focus, move chrome to the left
-  half, snap terminal to the right half, put slack on monitor 2,
-  place editor in the top-right quarter, three-way / N-way split,
-  send to external display, resize chrome to 900x700, make this
-  window smaller, focus jira, raise window, bring app to front,
+  many windows in one call (`windowctl batch`)**, **take a screenshot
+  of any monitor / region / window and drive the mouse and keyboard
+  to automate the UI (the visual loop: screenshot → click → type)**,
+  and request the macOS Accessibility + Screen Recording permissions
+  needed for move / resize / focus / batch / mouse / type /
+  screenshot. Trigger on: list windows, show open windows, what
+  windows do I have, list monitors, show displays, which monitor is
+  active, where's my cursor, which monitor has focus, move chrome to
+  the left half, snap terminal to the right half, put slack on
+  monitor 2, place editor in the top-right quarter, three-way / N-way
+  split, send to external display, resize chrome to 900x700, make
+  this window smaller, focus jira, raise window, bring app to front,
   apply my layout, save my arrangement, restore work mode, batch
-  place windows, request / check accessibility permission, AX
+  place windows, take a screenshot, screenshot this monitor / window
+  / region, capture the screen, move the mouse, click at x y,
+  double-click, right-click, type this text, press cmd+shift+s / hit
+  enter, send keystrokes, launch an app, open an app and wait for its
+  window, wait for a window to appear, automate a UI / click-through,
+  request / check accessibility or screen recording permission, AX
   permission, grant screen control, debug windowctl AX bridge. Uses
   `windowctl` (`npm install -g @muthuishere/windowctl`).
 ---
 
-<!-- version: 0.1.0 -->
+<!-- version: 0.2.0 -->
 
 # window-ctl-skill
 
@@ -76,11 +84,22 @@ recipe knowledge; `windowctl` owns the OS-specific window operations.
   trust the Width/Height and re-read with `windows list` for the
   authoritative position.
 - **macOS needs Accessibility once per parent process.** On the
-  first failed `move` / `resize` / `focus` with `Accessibility
-  permission denied`, route to `references/permissions.md`. The
-  only command that triggers the AX prompt is
-  `windowctl permissions`; everything else returns the denied error
-  without prompting. Re-run the original command after grant.
+  first failed `move` / `resize` / `focus` / `mouse` / `type` /
+  `key` with `Accessibility permission denied`, route to
+  `references/permissions.md`. The only command that triggers the
+  AX prompt is `windowctl permissions`; everything else returns the
+  denied error without prompting. Re-run the original command after
+  grant.
+- **`screenshot` needs a SECOND macOS grant: Screen Recording.**
+  It is separate from Accessibility. On `Screen Recording
+  permission denied`, route to `windowctl permissions --screen`
+  (check silently with `--screen --status`). See
+  `references/automation.md` and `references/permissions.md`.
+- **Automating the UI? Read `references/automation.md`.** The visual
+  loop (screenshot → read pixels → click/type) hinges on the
+  point-normalization guarantee (1 image pixel == 1 click point) and
+  the focus guard (always pass `--title`/`--app` to `type`/`key` so
+  keystrokes can't land in the wrong window).
 - **`WCTL_AX_DEBUG=1` is the macOS triage knob.** When `move` /
   `focus` reports `window <id> is gone from the AX tree`, re-run
   with `WCTL_AX_DEBUG=1` and surface the per-PID AX dump from
@@ -135,6 +154,7 @@ If the session ends, the skill re-lists.
    - Resize a window in place → `references/resize.md`
    - Bulk-place / save / restore a layout (`windowctl batch`) → `references/batch.md`
    - Focus / raise a window → `references/focus.md`
+   - Screenshot / mouse / type / key / launch / wait (automate the UI, the visual loop) → `references/automation.md`
    - macOS Accessibility prompts + AX-bridge debugging → `references/permissions.md`
    - Composite layouts ("split chrome + slack 50/50") → `references/recipes.md`
 3. Need a zone refresher? → `references/zones.md` (cheatsheet for 1A..2D
@@ -165,6 +185,7 @@ Zero-exit means the catalogue is internally consistent and installable.
 | Resize (in-place width/height change) | `references/resize.md` |
 | Batch (bulk-apply / save / restore layouts) | `references/batch.md` |
 | Focus (raise + activate, "this window" via Focused) | `references/focus.md` |
-| Permissions (macOS Accessibility, `WCTL_AX_DEBUG`) | `references/permissions.md` |
+| Automation (screenshot, mouse, type, key, launch, wait — the visual loop) | `references/automation.md` |
+| Permissions (macOS Accessibility + Screen Recording, `WCTL_AX_DEBUG`) | `references/permissions.md` |
 | Zones (1A..2D + N:M cheatsheet) | `references/zones.md` |
 | Composite layouts | `references/recipes.md` |

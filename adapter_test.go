@@ -20,6 +20,19 @@ type mockAdapter struct {
 	requestAXCalled   int
 	checkAXResult     bool
 	checkAXCalled     int
+
+	capturedRect Rect
+	capturedPath string
+	captureErr   error
+	cursorX      int
+	cursorY      int
+	movedMouseTo *[2]int
+	clickedAt    *[2]int
+	clickButton  MouseButton
+	clickCount   int
+	typedText    string
+	pressedChord *Chord
+	launchedApp  string
 }
 
 func (m *mockAdapter) ListWindows() ([]Window, error)  { return m.windows, m.listErr }
@@ -49,6 +62,39 @@ func (m *mockAdapter) CheckAccessibility() bool {
 	m.checkAXCalled++
 	return m.checkAXResult
 }
+func (m *mockAdapter) CaptureRect(bounds Rect, outPath string) error {
+	if m.captureErr != nil {
+		return m.captureErr
+	}
+	m.capturedRect = bounds
+	m.capturedPath = outPath
+	return nil
+}
+func (m *mockAdapter) MouseMove(x, y int) error {
+	m.movedMouseTo = &[2]int{x, y}
+	return nil
+}
+func (m *mockAdapter) MouseClick(x, y int, button MouseButton, clicks int) error {
+	m.clickedAt = &[2]int{x, y}
+	m.clickButton = button
+	m.clickCount = clicks
+	return nil
+}
+func (m *mockAdapter) CursorPosition() (int, int, error) { return m.cursorX, m.cursorY, nil }
+func (m *mockAdapter) TypeText(text string) error {
+	m.typedText = text
+	return nil
+}
+func (m *mockAdapter) PressChord(chord Chord) error {
+	m.pressedChord = &chord
+	return nil
+}
+func (m *mockAdapter) Launch(app string) error {
+	m.launchedApp = app
+	return nil
+}
+func (m *mockAdapter) CheckScreenCapture() bool    { return true }
+func (m *mockAdapter) RequestScreenCapture() error { return nil }
 
 func sampleWindows() []Window {
 	return []Window{
