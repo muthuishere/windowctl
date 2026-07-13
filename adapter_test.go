@@ -9,17 +9,17 @@ import (
 )
 
 type mockAdapter struct {
-	windows           []Window
-	monitors          []Monitor
-	moved             map[string]Rect
-	focused           string
-	listErr           error
-	moveErr           error
-	focusErr          error
-	requestAXErr      error
-	requestAXCalled   int
-	checkAXResult     bool
-	checkAXCalled     int
+	windows         []Window
+	monitors        []Monitor
+	moved           map[string]Rect
+	focused         string
+	listErr         error
+	moveErr         error
+	focusErr        error
+	requestAXErr    error
+	requestAXCalled int
+	checkAXResult   bool
+	checkAXCalled   int
 
 	capturedRect Rect
 	capturedPath string
@@ -47,9 +47,20 @@ type mockAdapter struct {
 	dragButton    MouseButton
 	windowStateOp *WindowOp
 	windowStateID string
+
+	// focusSetsMonitorFocused models a REAL focus transfer: when true,
+	// Focus(id) moves the "focused" flag onto the monitor under that
+	// window's centroid (clearing it elsewhere), so a subsequent
+	// stampFocused reports the raised window as Focused. Off by default
+	// so tests that assert focus never lands stay unaffected.
+	focusSetsMonitorFocused bool
+	// typedFocusedMonitor records the ID of the focused monitor at the
+	// instant TypeText fired — lets a test prove focus transferred to the
+	// target BEFORE any keystroke was injected (0 = none focused).
+	typedFocusedMonitor int
 }
 
-func (m *mockAdapter) ListWindows() ([]Window, error)  { return m.windows, m.listErr }
+func (m *mockAdapter) ListWindows() ([]Window, error)   { return m.windows, m.listErr }
 func (m *mockAdapter) ListMonitors() ([]Monitor, error) { return m.monitors, nil }
 func (m *mockAdapter) Move(id string, b Rect) error {
 	if m.moveErr != nil {
@@ -66,6 +77,17 @@ func (m *mockAdapter) Focus(id string) error {
 		return m.focusErr
 	}
 	m.focused = id
+	if m.focusSetsMonitorFocused {
+		for _, w := range m.windows {
+			if w.ID != id {
+				continue
+			}
+			target := monitorIDForCentroid(w.Bounds, m.monitors)
+			for i := range m.monitors {
+				m.monitors[i].Focused = m.monitors[i].ID == target
+			}
+		}
+	}
 	return nil
 }
 func (m *mockAdapter) RequestAccessibility() error {
@@ -97,6 +119,12 @@ func (m *mockAdapter) MouseClick(x, y int, button MouseButton, clicks int) error
 func (m *mockAdapter) CursorPosition() (int, int, error) { return m.cursorX, m.cursorY, nil }
 func (m *mockAdapter) TypeText(text string) error {
 	m.typedText = text
+	m.typedFocusedMonitor = 0
+	for _, mon := range m.monitors {
+		if mon.Focused {
+			m.typedFocusedMonitor = mon.ID
+		}
+	}
 	return nil
 }
 func (m *mockAdapter) PressChord(chord Chord) error {

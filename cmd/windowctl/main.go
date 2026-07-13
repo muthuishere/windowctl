@@ -38,6 +38,12 @@ func main() {
 		screenshotCmd(os.Args[2:])
 	case "find":
 		findCmd(os.Args[2:])
+	case "click":
+		clickCmd(os.Args[2:])
+	case "exists":
+		existsCmd(os.Args[2:])
+	case "read":
+		readCmd(os.Args[2:])
 	case "scroll":
 		scrollCmd(os.Args[2:])
 	case "drag":
@@ -86,6 +92,9 @@ Usage:
   windowctl batch [--file <path>] [--json]   (reads JSON array of entries from stdin or --file)
   windowctl screenshot [--monitor <n>] [--x <n> --y <n> --w <n> --h <n>] [--title <s> | --app <s>] [--out <path>] [--json]
   windowctl find --text <s> [--monitor <n>] [--x <n> --y <n> --w <n> --h <n>] [--title <s> | --app <s>] [--json] [--first]   (on-screen OCR → click coords)
+  windowctl click --text <s> [--title <s> | --app <s>] [--monitor <n>] [--x --y --w --h] [--right|--middle] [--double] [--json]   (OCR → click the label; no coords)
+  windowctl exists --text <s> [--title <s> | --app <s>] [--monitor <n>] [--x --y --w --h] [--json]   (OCR gate; exit 0 present / 1 absent)
+  windowctl read [--title <s> | --app <s>] [--monitor <n>] [--x --y --w --h] [--text <s>] [--json]   (OCR dump in reading order)
   windowctl scroll [--dx <n>] [--dy <n>] [--x <n> --y <n>] [--monitor <n>]
   windowctl drag --from-x <n> --from-y <n> --to-x <n> --to-y <n> [--monitor <n>] [--right|--middle]
   windowctl clipboard (get | set [--text <s>])   (set reads stdin when --text omitted)

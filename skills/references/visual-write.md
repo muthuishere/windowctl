@@ -11,7 +11,45 @@ DOM recipes: browser-bridge reads the DOM, windowctl drives ANY app's UI like a
 human — so it writes where the DOM (DraftJS/contentEditable/native/canvas)
 resists scripting.
 
-## find — OCR the screen, get click coordinates
+## Text-targeted verbs FIRST — never hand-compute a coordinate
+
+`click`, `exists`, and `read` each do the whole loop internally —
+screenshot → OCR → resolve → act — so you drive the GUI **by the words on
+screen**, not by pixels. Reach for these before `find`+`mouse click`, and
+before raw coordinates. They also erase the classic coordinate bug: OCR
+returns each label's point in **global** space and the click is issued in
+that **same** space, so the monitor-relative-vs-global trap (window bounds
+are global, `--monitor` makes clicks relative) can't bite you.
+
+```bash
+# Click a button/link/menu by its visible text:
+windowctl click --text "Submit" --app "Google Chrome"     # raises Chrome, OCRs it, clicks "Submit"
+windowctl click --text "OK"                               # focused monitor, no window scope
+windowctl click --text "File" --double                    # --right / --middle / --double as needed
+
+# Gate a step on what's on screen (exit 0 = present, 1 = absent):
+windowctl exists --text "Document Saved" --app TextEdit && echo "saved"
+until windowctl exists --text "Ready" --app MyApp; do sleep 0.5; done
+
+# Dump what a window says, in reading order (top→bottom, left→right):
+windowctl read --app "Google Chrome"                      # every recognized line
+windowctl read --app Slack --text "unread"                # only lines containing "unread"
+windowctl read --app TextEdit --json                      # with bounds + click points
+```
+
+Scope flags are identical across all three (and `find`/`screenshot`):
+`--app`/`--title` (a window — **raised first** by `click` so OCR reads it),
+`--monitor N`, `--x --y --w --h` (a region), or nothing (the focused
+monitor). A `click` whose text isn't found exits non-zero and clicks
+nothing — safe to gate on.
+
+**Full write loop, zero pixels:**
+`click --text "Add a comment"` → `type --app … --text "…"` →
+`exists --text "Comment posted"` to verify. Drop to `find`+`mouse click`
+(below) only when you need the raw coordinate — e.g. to click an icon with
+no text, or a fixed offset from a found label.
+
+## find — OCR the screen, get click coordinates (when you need the raw point)
 
 `windowctl find --text "Submit"` runs native macOS Vision OCR over a monitor,
 window, or region and returns every match with a **click point in the same
