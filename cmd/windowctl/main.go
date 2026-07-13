@@ -36,6 +36,16 @@ func main() {
 		batchCmd(os.Args[2:])
 	case "screenshot":
 		screenshotCmd(os.Args[2:])
+	case "find":
+		findCmd(os.Args[2:])
+	case "scroll":
+		scrollCmd(os.Args[2:])
+	case "drag":
+		dragCmd(os.Args[2:])
+	case "clipboard":
+		clipboardCmd(os.Args[2:])
+	case "minimize", "maximize", "fullscreen", "close":
+		windowStateCmd(os.Args[1], os.Args[2:])
 	case "mouse":
 		mouseCmd(os.Args[2:])
 	case "type":
@@ -73,6 +83,11 @@ Usage:
   windowctl permissions [--status] [--json] [--screen]
   windowctl batch [--file <path>] [--json]   (reads JSON array of entries from stdin or --file)
   windowctl screenshot [--monitor <n>] [--x <n> --y <n> --w <n> --h <n>] [--title <s> | --app <s>] [--out <path>] [--json]
+  windowctl find --text <s> [--monitor <n>] [--x <n> --y <n> --w <n> --h <n>] [--title <s> | --app <s>] [--json] [--first]   (on-screen OCR → click coords)
+  windowctl scroll [--dx <n>] [--dy <n>] [--x <n> --y <n>] [--monitor <n>]
+  windowctl drag --from-x <n> --from-y <n> --to-x <n> --to-y <n> [--monitor <n>] [--right|--middle]
+  windowctl clipboard (get | set [--text <s>])   (set reads stdin when --text omitted)
+  windowctl (minimize|maximize|fullscreen|close) (--title <s> | --app <s>)
   windowctl mouse move --x <n> --y <n> [--monitor <n>]
   windowctl mouse click [--x <n> --y <n>] [--monitor <n>] [--right|--middle] [--double]
   windowctl mouse position [--json]
