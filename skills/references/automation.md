@@ -180,9 +180,21 @@ revokes the link and stops everything.
 
 - The URL **is** the key: it carries a per-run random token; requests
   without it get 403. Share it like a house key, Ctrl-C to revoke.
-- Default is **local only** (`http://127.0.0.1:<port>/?t=...`). Add
-  `--tunnel` to also expose a public `*.trycloudflare.com` URL via
-  cloudflared (must be installed).
+- The stream is live **MJPEG** (continuous, ~10fps default), not a
+  slideshow — `--fps` (1–30) and the `?q=` quality knob tune it.
+- Default binds the **LAN IP** so devices on the same network reach it
+  directly. `--tunnel` also exposes a public `*.trycloudflare.com` URL
+  via cloudflared (must be installed).
+
+> **⚠️ Confirmation gate — ALWAYS ask before a `--tunnel` (public)
+> stream.** A cloudflare tunnel puts full mouse + keyboard control of
+> the machine behind a public URL that anyone who gets the link can
+> drive. Before running `windowctl remote --tunnel`, state plainly that
+> this exposes desktop control on a public internet URL and get an
+> explicit "yes" from the user. The LAN-only form (no `--tunnel`) does
+> **not** need this confirmation. This gate holds even when the user has
+> a standing "always use cloudflare" preference — confirm the specific
+> act of going live each time, then proceed.
 - `--monitor` picks the shared display (default: focused); the viewer
   also has a monitor dropdown. `--fps` caps the poll rate (1–10,
   default 2).

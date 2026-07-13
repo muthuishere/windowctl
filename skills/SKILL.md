@@ -100,6 +100,14 @@ recipe knowledge; `windowctl` owns the OS-specific window operations.
   point-normalization guarantee (1 image pixel == 1 click point) and
   the focus guard (always pass `--title`/`--app` to `type`/`key` so
   keystrokes can't land in the wrong window).
+- **A public (`--tunnel`) remote stream ALWAYS needs explicit
+  confirmation.** `windowctl remote --tunnel` puts full mouse +
+  keyboard control behind a public `*.trycloudflare.com` URL that
+  anyone with the link can drive. Before running it, say plainly that
+  it exposes desktop control on the public internet and get an explicit
+  "yes" — every time, even under a standing "always use cloudflare"
+  preference. The LAN-only form (no `--tunnel`) needs no confirmation.
+  See `references/automation.md`.
 - **`WCTL_AX_DEBUG=1` is the macOS triage knob.** When `move` /
   `focus` reports `window <id> is gone from the AX tree`, re-run
   with `WCTL_AX_DEBUG=1` and surface the per-PID AX dump from
