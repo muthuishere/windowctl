@@ -47,6 +47,12 @@ tasks:
     cmds:
       - bash ./scripts/smoke-darwin-apps.sh
 
+  smoke-visual-loop:
+    desc: "macOS visual loop proof: find --text (OCR) → click → type → OCR-verify on TextEdit, no hardcoded pixels"
+    deps: [build]
+    cmds:
+      - bash ./scripts/smoke-visual-loop.sh
+
   smoke-windows:
     desc: Run the Windows real-window smoke test (Notepad)
     cmds:
