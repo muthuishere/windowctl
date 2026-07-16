@@ -1,6 +1,8 @@
 # windowctl
 
-**windowctl** is a cross-platform CLI **and** Go library for managing desktop windows and monitors on macOS, Windows, and Linux in a consistent, scriptable way.
+[![Go Reference](https://pkg.go.dev/badge/github.com/muthuishere/windowctl.svg)](https://pkg.go.dev/github.com/muthuishere/windowctl)
+
+**windowctl** is a cross-platform CLI **and** Go library for managing desktop windows and monitors on macOS, Windows, and Linux in a consistent, scriptable way. Go docs: [pkg.go.dev/github.com/muthuishere/windowctl](https://pkg.go.dev/github.com/muthuishere/windowctl).
 
 ## Overview
 
