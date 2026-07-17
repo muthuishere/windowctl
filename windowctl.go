@@ -11,19 +11,37 @@ import (
 )
 
 type (
-	Window  = core.Window
-	Monitor = core.Monitor
-	Rect    = core.Rect
-	Filter  = core.Filter
-	Match   = core.Match
-	Target  = core.Target
-	Adapter = core.Adapter
+	Window      = core.Window
+	Monitor     = core.Monitor
+	Rect        = core.Rect
+	Filter      = core.Filter
+	Match       = core.Match
+	Target      = core.Target
+	Adapter     = core.Adapter
+	MouseButton = core.MouseButton
+	Chord       = core.Chord
+	TextMatch   = core.TextMatch
+	WindowOp    = core.WindowOp
+)
+
+const (
+	MouseLeft   = core.MouseLeft
+	MouseRight  = core.MouseRight
+	MouseMiddle = core.MouseMiddle
+)
+
+const (
+	WindowMinimize   = core.WindowMinimize
+	WindowMaximize   = core.WindowMaximize
+	WindowFullscreen = core.WindowFullscreen
+	WindowClose      = core.WindowClose
 )
 
 var (
 	ErrNotImplemented      = core.ErrNotImplemented
 	ErrNoMatch             = core.ErrNoMatch
 	ErrAccessibilityDenied = core.ErrAccessibilityDenied
+	ErrScreenCaptureDenied = core.ErrScreenCaptureDenied
 )
 
 var defaultAdapter Adapter = newPlatformAdapter()
@@ -105,6 +123,19 @@ func CheckAccessibility() bool {
 
 func checkAccessibilityWith(a Adapter) bool {
 	return a.CheckAccessibility()
+}
+
+// RequestScreenCapture / CheckScreenCapture mirror the Accessibility
+// pair for the macOS Screen Recording permission (the separate TCC
+// gate Screenshot needs). Request may surface the system prompt once
+// and returns ErrScreenCaptureDenied when still denied; Check never
+// prompts. Both are no-ops (nil / true) on linux and windows.
+func RequestScreenCapture() error {
+	return defaultAdapter.RequestScreenCapture()
+}
+
+func CheckScreenCapture() bool {
+	return defaultAdapter.CheckScreenCapture()
 }
 
 // MoveZone moves the window matched by `match` into the given zone on the

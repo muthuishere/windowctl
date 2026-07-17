@@ -2,13 +2,24 @@
 name: window-ctl-skill
 ---
 
-# Permissions — recipes (macOS Accessibility)
+# Permissions — recipes (macOS Accessibility + Screen Recording)
 
 `windowctl permissions` is the only command in the CLI that triggers
 the macOS Accessibility (AX) permission prompt. Every other command
-that needs AX (`move`, `focus`) returns
+that needs AX (`move`, `focus`, `mouse`, `type`, `key`) returns
 `core.ErrAccessibilityDenied` without prompting — the user has to
 opt in via `windowctl permissions` or the system grant flow.
+
+**Two independent macOS grants:**
+- **Accessibility** — needed to MOVE/FOCUS/RESIZE windows and to
+  synthesize mouse + keyboard input. `windowctl permissions`
+  (bare / `--status`).
+- **Screen Recording** — needed ONLY by `windowctl screenshot`. A
+  totally separate TCC grant; having Accessibility does not imply
+  it. `windowctl permissions --screen` (add `--status` for the
+  read-only check). On denial `screenshot` returns
+  `core.ErrScreenCaptureDenied`, whose message already names
+  `windowctl permissions --screen`. See PERM-SCR-1 below.
 
 **Per-platform behavior:**
 - **macOS:** Real AX flow — see PERM-1 and PERM-S-1.
@@ -71,6 +82,46 @@ windowctl permissions --status --json
 **User-visible formatting:** Usually invisible — feed the JSON into
 a downstream conditional. If you must surface it, render as
 *"Accessibility: trusted"* / *"Accessibility: not trusted"*.
+
+---
+
+## PERM-SCR-1: Screen Recording (for `screenshot`)
+
+**When to use:** `windowctl screenshot` returned `Screen Recording
+permission denied`, or you want to check/grant before capturing.
+This is a DIFFERENT grant from Accessibility — a machine with AX
+granted can still be denied Screen Recording.
+
+**Command:**
+```bash
+windowctl permissions --screen --status          # check, no prompt → "granted" (exit 0) / denied (exit 1)
+windowctl permissions --screen --status --json    # check as JSON → {"granted":true|false}, always exit 0
+windowctl permissions --screen                    # request (may show the system prompt once)
+```
+
+**Expected response:**
+- `--screen --status`: exit 0 + `granted` → capture will work. Exit
+  non-zero + the denied message → route the user to grant.
+- `--screen --status --json`: `{"granted":true}` / `{"granted":false}`,
+  exit always 0 — branch on the JSON.
+- `--screen` (request): exit 0 + `granted` once trusted; otherwise the
+  actionable denial message.
+- Linux / Windows: "not required" / `{"granted":true}` — no gate
+  exists there.
+
+**Common errors:**
+- `Screen Recording permission denied` from `screenshot` itself —
+  this recipe is the fix; run `--screen` to request.
+- **Still denied right after the user granted it** — macOS usually
+  requires the capturing process to be RESTARTED after the Screen
+  Recording switch is flipped in System Settings → Privacy &
+  Security → Screen Recording. Same parent-process TCC keying as AX
+  (see the gotcha at the top of this file): quit and relaunch the
+  terminal, then re-check.
+
+**User-visible formatting:** *"Screen Recording: granted"* /
+*"Screen Recording: denied — grant in System Settings → Privacy &
+Security → Screen Recording, then relaunch the terminal."*
 
 ---
 

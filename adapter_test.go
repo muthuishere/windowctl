@@ -9,20 +9,58 @@ import (
 )
 
 type mockAdapter struct {
-	windows           []Window
-	monitors          []Monitor
-	moved             map[string]Rect
-	focused           string
-	listErr           error
-	moveErr           error
-	focusErr          error
-	requestAXErr      error
-	requestAXCalled   int
-	checkAXResult     bool
-	checkAXCalled     int
+	windows         []Window
+	monitors        []Monitor
+	moved           map[string]Rect
+	focused         string
+	listErr         error
+	moveErr         error
+	focusErr        error
+	requestAXErr    error
+	requestAXCalled int
+	checkAXResult   bool
+	checkAXCalled   int
+
+	capturedRect Rect
+	capturedPath string
+	captureErr   error
+	cursorX      int
+	cursorY      int
+	movedMouseTo *[2]int
+	clickedAt    *[2]int
+	clickButton  MouseButton
+	clickCount   int
+	typedText    string
+	pressedChord *Chord
+	launchedApp  string
+
+	findRect      Rect
+	findMatches   []TextMatch
+	findErr       error
+	clipboard     string
+	clipboardErr  error
+	setClipboard  *string
+	scrolledAt    *[2]int
+	scrollDelta   *[2]int
+	draggedFrom   *[2]int
+	draggedTo     *[2]int
+	dragButton    MouseButton
+	windowStateOp *WindowOp
+	windowStateID string
+
+	// focusSetsMonitorFocused models a REAL focus transfer: when true,
+	// Focus(id) moves the "focused" flag onto the monitor under that
+	// window's centroid (clearing it elsewhere), so a subsequent
+	// stampFocused reports the raised window as Focused. Off by default
+	// so tests that assert focus never lands stay unaffected.
+	focusSetsMonitorFocused bool
+	// typedFocusedMonitor records the ID of the focused monitor at the
+	// instant TypeText fired — lets a test prove focus transferred to the
+	// target BEFORE any keystroke was injected (0 = none focused).
+	typedFocusedMonitor int
 }
 
-func (m *mockAdapter) ListWindows() ([]Window, error)  { return m.windows, m.listErr }
+func (m *mockAdapter) ListWindows() ([]Window, error)   { return m.windows, m.listErr }
 func (m *mockAdapter) ListMonitors() ([]Monitor, error) { return m.monitors, nil }
 func (m *mockAdapter) Move(id string, b Rect) error {
 	if m.moveErr != nil {
@@ -39,6 +77,17 @@ func (m *mockAdapter) Focus(id string) error {
 		return m.focusErr
 	}
 	m.focused = id
+	if m.focusSetsMonitorFocused {
+		for _, w := range m.windows {
+			if w.ID != id {
+				continue
+			}
+			target := monitorIDForCentroid(w.Bounds, m.monitors)
+			for i := range m.monitors {
+				m.monitors[i].Focused = m.monitors[i].ID == target
+			}
+		}
+	}
 	return nil
 }
 func (m *mockAdapter) RequestAccessibility() error {
@@ -48,6 +97,71 @@ func (m *mockAdapter) RequestAccessibility() error {
 func (m *mockAdapter) CheckAccessibility() bool {
 	m.checkAXCalled++
 	return m.checkAXResult
+}
+func (m *mockAdapter) CaptureRect(bounds Rect, outPath string) error {
+	if m.captureErr != nil {
+		return m.captureErr
+	}
+	m.capturedRect = bounds
+	m.capturedPath = outPath
+	return nil
+}
+func (m *mockAdapter) MouseMove(x, y int) error {
+	m.movedMouseTo = &[2]int{x, y}
+	return nil
+}
+func (m *mockAdapter) MouseClick(x, y int, button MouseButton, clicks int) error {
+	m.clickedAt = &[2]int{x, y}
+	m.clickButton = button
+	m.clickCount = clicks
+	return nil
+}
+func (m *mockAdapter) CursorPosition() (int, int, error) { return m.cursorX, m.cursorY, nil }
+func (m *mockAdapter) TypeText(text string) error {
+	m.typedText = text
+	m.typedFocusedMonitor = 0
+	for _, mon := range m.monitors {
+		if mon.Focused {
+			m.typedFocusedMonitor = mon.ID
+		}
+	}
+	return nil
+}
+func (m *mockAdapter) PressChord(chord Chord) error {
+	m.pressedChord = &chord
+	return nil
+}
+func (m *mockAdapter) Launch(app string) error {
+	m.launchedApp = app
+	return nil
+}
+func (m *mockAdapter) CheckScreenCapture() bool    { return true }
+func (m *mockAdapter) RequestScreenCapture() error { return nil }
+func (m *mockAdapter) FindText(rect Rect) ([]TextMatch, error) {
+	m.findRect = rect
+	return m.findMatches, m.findErr
+}
+func (m *mockAdapter) Clipboard() (string, error) { return m.clipboard, m.clipboardErr }
+func (m *mockAdapter) SetClipboard(text string) error {
+	m.setClipboard = &text
+	m.clipboard = text
+	return nil
+}
+func (m *mockAdapter) Scroll(x, y, dx, dy int) error {
+	m.scrolledAt = &[2]int{x, y}
+	m.scrollDelta = &[2]int{dx, dy}
+	return nil
+}
+func (m *mockAdapter) Drag(fromX, fromY, toX, toY int, button MouseButton) error {
+	m.draggedFrom = &[2]int{fromX, fromY}
+	m.draggedTo = &[2]int{toX, toY}
+	m.dragButton = button
+	return nil
+}
+func (m *mockAdapter) WindowState(id string, op WindowOp) error {
+	m.windowStateID = id
+	m.windowStateOp = &op
+	return nil
 }
 
 func sampleWindows() []Window {

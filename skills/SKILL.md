@@ -6,22 +6,33 @@ description: >
   FOCUSED window), move a window into a predefined zone (1A, 1B,
   2A..2D), an N:M split, or absolute / monitor-relative coordinates,
   resize a window in place, focus a window, **bulk-apply a layout of
-  many windows in one call (`windowctl batch`)**, and request the
-  macOS Accessibility permission needed for move / resize / focus /
-  batch. Trigger on: list windows, show open windows, what windows do
-  I have, list monitors, show displays, which monitor is active,
-  where's my cursor, which monitor has focus, move chrome to the left
-  half, snap terminal to the right half, put slack on monitor 2,
-  place editor in the top-right quarter, three-way / N-way split,
-  send to external display, resize chrome to 900x700, make this
-  window smaller, focus jira, raise window, bring app to front,
+  many windows in one call (`windowctl batch`)**, **take a screenshot
+  of any monitor / region / window and drive the mouse and keyboard
+  to automate the UI (the visual loop: screenshot → click → type)**,
+  and request the macOS Accessibility + Screen Recording permissions
+  needed for move / resize / focus / batch / mouse / type /
+  screenshot. Trigger on: list windows, show open windows, what
+  windows do I have, list monitors, show displays, which monitor is
+  active, where's my cursor, which monitor has focus, move chrome to
+  the left half, snap terminal to the right half, put slack on
+  monitor 2, place editor in the top-right quarter, three-way / N-way
+  split, send to external display, resize chrome to 900x700, make
+  this window smaller, focus jira, raise window, bring app to front,
   apply my layout, save my arrangement, restore work mode, batch
-  place windows, request / check accessibility permission, AX
+  place windows, take a screenshot, screenshot this monitor / window
+  / region, capture the screen, click the Submit button, click the
+  link / menu / tab labelled X, tap the button that says Y, is X
+  visible on screen, wait until X appears, read what this window says,
+  what text is on screen, dump the screen text, move the mouse, click
+  at x y, double-click, right-click, type this text, press cmd+shift+s
+  / hit enter, send keystrokes, launch an app, open an app and wait for
+  its window, wait for a window to appear, automate a UI / click-through,
+  request / check accessibility or screen recording permission, AX
   permission, grant screen control, debug windowctl AX bridge. Uses
   `windowctl` (`npm install -g @muthuishere/windowctl`).
 ---
 
-<!-- version: 0.1.0 -->
+<!-- version: 0.2.0 -->
 
 # window-ctl-skill
 
@@ -76,11 +87,43 @@ recipe knowledge; `windowctl` owns the OS-specific window operations.
   trust the Width/Height and re-read with `windows list` for the
   authoritative position.
 - **macOS needs Accessibility once per parent process.** On the
-  first failed `move` / `resize` / `focus` with `Accessibility
-  permission denied`, route to `references/permissions.md`. The
-  only command that triggers the AX prompt is
-  `windowctl permissions`; everything else returns the denied error
-  without prompting. Re-run the original command after grant.
+  first failed `move` / `resize` / `focus` / `mouse` / `type` /
+  `key` with `Accessibility permission denied`, route to
+  `references/permissions.md`. The only command that triggers the
+  AX prompt is `windowctl permissions`; everything else returns the
+  denied error without prompting. Re-run the original command after
+  grant.
+- **`screenshot` needs a SECOND macOS grant: Screen Recording.**
+  It is separate from Accessibility. On `Screen Recording
+  permission denied`, route to `windowctl permissions --screen`
+  (check silently with `--screen --status`). See
+  `references/automation.md` and `references/permissions.md`.
+- **Driving a GUI? Target ON-SCREEN TEXT, not coordinates.** The
+  first-choice verbs are `click --text "<label>"`, `exists --text
+  "<label>"`, and `read [--app <s>]` — each screenshots, OCRs, resolves
+  the target, and acts in ONE call, so you never compute a pixel. Prefer
+  them over `find` + `mouse click`, and reserve raw `--x/--y` for the
+  rare case with no text to target (a bare icon, a fixed offset from a
+  found label). They also sidestep the coordinate trap: OCR reports a
+  label's point in GLOBAL space and the click fires in that SAME space,
+  so the monitor-relative-vs-global confusion can't happen. Scope with
+  `--app`/`--title` (a window — `click` raises it first so OCR reads the
+  right one), `--monitor N`, a `--x --y --w --h` region, or nothing (the
+  focused monitor). See `references/visual-write.md`.
+- **Automating the UI? Read `references/automation.md`.** Under the
+  text-targeted verbs, the visual loop (screenshot → read pixels →
+  click/type) hinges on the point-normalization guarantee (1 image
+  pixel == 1 click point) and the focus guard (always pass
+  `--title`/`--app` to `type`/`key`/`click` so keystrokes and clicks
+  can't land in the wrong window).
+- **A public (`--tunnel`) remote stream ALWAYS needs explicit
+  confirmation.** `windowctl remote --tunnel` puts full mouse +
+  keyboard control behind a public `*.trycloudflare.com` URL that
+  anyone with the link can drive. Before running it, say plainly that
+  it exposes desktop control on the public internet and get an explicit
+  "yes" — every time, even under a standing "always use cloudflare"
+  preference. The LAN-only form (no `--tunnel`) needs no confirmation.
+  See `references/automation.md`.
 - **`WCTL_AX_DEBUG=1` is the macOS triage knob.** When `move` /
   `focus` reports `window <id> is gone from the AX tree`, re-run
   with `WCTL_AX_DEBUG=1` and surface the per-PID AX dump from
@@ -135,6 +178,9 @@ If the session ends, the skill re-lists.
    - Resize a window in place → `references/resize.md`
    - Bulk-place / save / restore a layout (`windowctl batch`) → `references/batch.md`
    - Focus / raise a window → `references/focus.md`
+   - **Click / check / read on-screen TEXT (`click`, `exists`, `read` — the default GUI-drive path)** → `references/visual-write.md`
+   - Screenshot / mouse / type / key / launch / wait (automate the UI, the visual loop) → `references/automation.md`
+   - Find on-screen text by OCR → click / scroll / drag / clipboard / minimize|maximize|fullscreen|close / **replayable recipes** (the visual WRITE rail) → `references/visual-write.md`
    - macOS Accessibility prompts + AX-bridge debugging → `references/permissions.md`
    - Composite layouts ("split chrome + slack 50/50") → `references/recipes.md`
 3. Need a zone refresher? → `references/zones.md` (cheatsheet for 1A..2D
@@ -165,6 +211,8 @@ Zero-exit means the catalogue is internally consistent and installable.
 | Resize (in-place width/height change) | `references/resize.md` |
 | Batch (bulk-apply / save / restore layouts) | `references/batch.md` |
 | Focus (raise + activate, "this window" via Focused) | `references/focus.md` |
-| Permissions (macOS Accessibility, `WCTL_AX_DEBUG`) | `references/permissions.md` |
+| Automation (screenshot, mouse, type, key, launch, wait — the visual loop) | `references/automation.md` |
+| Text-targeted verbs (`click`/`exists`/`read`) + visual write rail (find/OCR, scroll, drag, clipboard, window-state, recipes) | `references/visual-write.md` |
+| Permissions (macOS Accessibility + Screen Recording, `WCTL_AX_DEBUG`) | `references/permissions.md` |
 | Zones (1A..2D + N:M cheatsheet) | `references/zones.md` |
 | Composite layouts | `references/recipes.md` |

@@ -63,3 +63,26 @@ type Target struct {
 	Monitor *int
 	Bounds  Rect
 }
+
+// TextMatch is one piece of on-screen text located by FindText (native
+// OCR). Bounds and Click are absolute global points — the same space
+// MouseClick consumes — so `find --text` output feeds `mouse click`
+// with no transformation (the coordinate contract).
+type TextMatch struct {
+	Text       string `json:"text"`
+	Confidence float64 `json:"confidence"`
+	Bounds     Rect   `json:"bounds"`
+	ClickX     int    `json:"click_x"`
+	ClickY     int    `json:"click_y"`
+}
+
+// WindowOp names a window-state change applied by an adapter's
+// WindowState. The public package parses the CLI verb into one of these.
+type WindowOp int
+
+const (
+	WindowMinimize WindowOp = iota
+	WindowMaximize
+	WindowFullscreen
+	WindowClose
+)

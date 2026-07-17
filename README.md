@@ -14,7 +14,9 @@ A unified interface across macOS, Windows, and Linux for:
 - Resizing windows in place
 - Focusing specific windows
 - Bulk-placing many windows in one call from a JSON layout (`windowctl batch`)
-- Granting macOS Accessibility permission interactively
+- Screenshotting any monitor, region, or window to a point-normalized PNG, and driving the mouse/keyboard to automate a UI (screenshot → click → type)
+- Launching apps and waiting for their windows to appear
+- Granting macOS Accessibility + Screen Recording permissions interactively
 
 ## Installation
 
@@ -50,7 +52,17 @@ windowctl permissions --status        # human-readable: "granted" / "denied"
 windowctl permissions --status --json # → {"trusted": true|false} (exit 0 either way)
 ```
 
-`windows list` and `monitors list` work without AX. Only Move/Focus/Resize need it.
+`windows list` and `monitors list` work without AX. Move/Focus/Resize and the mouse/keyboard automation commands (`mouse`, `type`, `key`) need it.
+
+`screenshot` needs a **separate** grant — Screen Recording:
+
+```sh
+windowctl permissions --screen                 # trigger the Screen Recording prompt (first time only)
+windowctl permissions --screen --status        # "granted" / "denied"
+windowctl permissions --screen --status --json # → {"granted": true|false}
+```
+
+macOS often requires you to **relaunch the terminal** after toggling Screen Recording before a capture succeeds.
 
 ## Usage
 
@@ -164,6 +176,74 @@ windowctl batch --json < layout.json   # structured per-entry results
 Per entry: at least one of `title` / `app` is required; target is **either** `zone` **or** all four of `x`/`y`/`w`/`h` (not both). `monitor` is optional and 1-indexed.
 
 Exit codes: `0` if every entry succeeded, `1` if any entry failed, `2` for invalid input (parse error, missing file). With `--json` the same per-entry results land on stdout as `{ "entry": {...}, "ok": true }` or `{ "entry": {...}, "error": "..." }`.
+
+## Desktop automation (screenshot + input)
+
+Beyond arranging windows, `windowctl` can **see** the screen and **drive** the mouse/keyboard — enough to automate a UI end to end: screenshot → read the image → click/type → screenshot to confirm. All of it is native (CoreGraphics/CGEvent on macOS, Win32 on Windows, `xdotool`/`import` on Linux).
+
+### Screenshot
+
+```sh
+windowctl screenshot                                   # the focused monitor → screenshot-<ts>.png
+windowctl screenshot --monitor 2 --out display2.png    # a whole display
+windowctl screenshot --app "Google Chrome" --out c.png # a window's bounds
+windowctl screenshot --x 100 --y 100 --w 400 --h 300 --out region.png   # an absolute region
+windowctl screenshot --monitor 1 --x 0 --y 0 --w 800 --h 600 --json     # monitor-relative region + JSON
+```
+
+The written PNG is **point-normalized**: 1 image pixel equals 1 screen coordinate point, even on a retina display. `--json` reports the captured rect's origin, so a spot at image pixel `(px, py)` is clicked at global `(X + px, Y + py)`:
+
+```json
+{"Path":"region.png","X":100,"Y":100,"Width":400,"Height":300}
+```
+
+On macOS `screenshot` needs the **Screen Recording** permission (separate from Accessibility): `windowctl permissions --screen` to grant, `--screen --status` to check.
+
+### Mouse and keyboard
+
+```sh
+windowctl mouse move --x 840 --y 470                   # warp the cursor (monitor-relative with --monitor)
+windowctl mouse click --x 840 --y 470                  # move + left-click; add --right/--middle/--double
+windowctl mouse click                                  # click at the current position
+windowctl mouse position --json                        # → {"X":593,"Y":732}
+
+windowctl type --app "TextEdit" --text "hello world"   # focus TextEdit, verify, then type
+windowctl key  --app "TextEdit" --combo "cmd+s"        # focus + press a chord
+windowctl type --text "types into whatever is focused" # no filter → current focus (see the guard note)
+```
+
+**Focus guard (important):** always pass `--title`/`--app` to `type`/`key`. With a filter, the command focuses the target and **verifies** it actually became focused before injecting anything — if focus doesn't land within 2s it errors instead of typing into the wrong window. Without a filter, keystrokes go to whatever holds the keyboard at that instant, which right after a launch/focus is often the *previous* window.
+
+Chords: `+`-separated modifiers (`cmd`/`command`/`meta`/`super`/`win`, `ctrl`, `alt`/`opt`/`option`, `shift`) plus a key (a character, `f1`..`f12`, or a named key like `enter`/`tab`/`esc`/`space`/arrows/`delete`/`backspace`/`home`/`end`/`pageup`/`pagedown`). Shift must be explicit: `cmd+shift+s`.
+
+Mouse/keyboard synthesis reuses the macOS Accessibility grant (same as move/focus).
+
+### Launch and wait
+
+```sh
+windowctl launch --app "Google Chrome"                 # start/foreground an app; returns immediately
+windowctl wait --app "Google Chrome" --timeout 8000 --json   # block until its window exists
+```
+
+Typical "open then act" sequence:
+
+```sh
+windowctl launch --app TextEdit
+windowctl wait   --app TextEdit --timeout 8000
+windowctl type   --app TextEdit --text "safe to type now"
+```
+
+`wait` also matches windows that are **already** open — to catch specifically a *new* window, snapshot `windows list --json` before launching and diff the IDs.
+
+### Remote — screen share + control in a browser
+
+```sh
+windowctl remote                    # local URL: stream a monitor + drive mouse/keyboard from a browser
+windowctl remote --monitor 2 --fps 5
+windowctl remote --tunnel           # also expose a public *.trycloudflare.com URL (needs cloudflared)
+```
+
+Prints a URL with a per-run access token baked in. Open it in any browser (on the LAN by default) to see the live screen and click/type back to the machine. The link **is** the key — requests without the token get 403; press Ctrl-C to revoke it and stop the server. Clicks map to true screen coordinates via the point-normalization guarantee, so they land correctly even on a scaled/retina display. Needs Accessibility (control) + Screen Recording (frames) on macOS.
 
 ## Zones
 

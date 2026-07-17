@@ -614,6 +614,54 @@ static int wctl_ax_focus(long id) {
     }
     return WCTL_AX_OK;
 }
+
+// wctl_ax_window_state applies a window-state op via AX. op: 0 minimize,
+// 2 fullscreen (toggle), 3 close. Maximize (1) is composed in the public
+// package via Move and never reaches here.
+static int wctl_ax_window_state(long id, int op) {
+    if (!wctl_ax_check()) return WCTL_AX_ERR_DENIED;
+
+    long pid = 0;
+    double cx = 0, cy = 0, cw = 0, ch = 0;
+    char* title = NULL;
+    int got = wctl_window_for_id(id, &pid, &cx, &cy, &cw, &ch, &title);
+    if (got < 0) { if (title) free(title); return WCTL_AX_ERR_INTERNAL; }
+    if (got == 0) { if (title) free(title); return WCTL_AX_ERR_NOTFOUND; }
+
+    AXUIElementRef w = wctl_ax_resolve((pid_t)pid, title, cx, cy, cw, ch);
+    if (title) free(title);
+    if (!w) return WCTL_AX_ERR_NOWINDOW;
+
+    int rc = WCTL_AX_OK;
+    if (op == 0) {                        // minimize
+        AXError e = AXUIElementSetAttributeValue(w, kAXMinimizedAttribute, kCFBooleanTrue);
+        if (e != kAXErrorSuccess) rc = WCTL_AX_ERR_SETFAIL;
+    } else if (op == 2) {                 // fullscreen (toggle)
+        CFStringRef attr = CFSTR("AXFullScreen");
+        CFTypeRef cur = NULL;
+        Boolean want = true;
+        if (AXUIElementCopyAttributeValue(w, attr, &cur) == kAXErrorSuccess && cur) {
+            if (CFGetTypeID(cur) == CFBooleanGetTypeID())
+                want = !CFBooleanGetValue((CFBooleanRef)cur);
+            CFRelease(cur);
+        }
+        AXError e = AXUIElementSetAttributeValue(w, attr, want ? kCFBooleanTrue : kCFBooleanFalse);
+        if (e != kAXErrorSuccess) rc = WCTL_AX_ERR_SETFAIL;
+    } else if (op == 3) {                 // close (press the close button)
+        CFTypeRef btn = NULL;
+        if (AXUIElementCopyAttributeValue(w, kAXCloseButtonAttribute, &btn) == kAXErrorSuccess && btn) {
+            AXError e = AXUIElementPerformAction((AXUIElementRef)btn, kAXPressAction);
+            CFRelease(btn);
+            if (e != kAXErrorSuccess) rc = WCTL_AX_ERR_SETFAIL;
+        } else {
+            rc = WCTL_AX_ERR_SETFAIL;
+        }
+    } else {
+        rc = WCTL_AX_ERR_INTERNAL;
+    }
+    CFRelease(w);
+    return rc;
+}
 */
 import "C"
 
@@ -851,6 +899,29 @@ func (a *Adapter) Focus(id string) error {
 	}
 	rc := int(C.wctl_ax_focus(C.long(cgID)))
 	return translateAXReturn(rc, id, "focus")
+}
+
+// WindowState applies minimize/fullscreen/close via AX. Maximize is
+// composed in the public package (Move to the window's monitor) and is
+// rejected here so the C helper's op space stays minimal.
+func (a *Adapter) WindowState(id string, op core.WindowOp) error {
+	cgID, err := parseCGWindowID(id)
+	if err != nil {
+		return err
+	}
+	var cop C.int
+	switch op {
+	case core.WindowMinimize:
+		cop = 0
+	case core.WindowFullscreen:
+		cop = 2
+	case core.WindowClose:
+		cop = 3
+	default:
+		return fmt.Errorf("window state op %d not handled by adapter", int(op))
+	}
+	rc := int(C.wctl_ax_window_state(C.long(cgID), cop))
+	return translateAXReturn(rc, id, "window-state")
 }
 
 // RequestAccessibility triggers the macOS AX trust check WITH prompt
