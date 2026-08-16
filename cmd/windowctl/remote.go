@@ -51,7 +51,25 @@ func remoteCmd(args []string) {
 	port := fs.Int("port", 0, "localhost port to bind (0 = pick a free one)")
 	tunnel := fs.Bool("tunnel", false, "also expose a public URL via cloudflared (default: local URL only)")
 	fps := fs.Float64("fps", 10, "target frames per second for the live stream (1-30)")
+	key := fs.String("key", "", "shared access key gating every request (default: fresh random token per run). "+
+		"Set a stable key when the viewer URL is stable — e.g. behind a named tunnel on your own domain — "+
+		"so the link survives restarts. Falls back to $WINDOWCTL_REMOTE_KEY when the flag is empty.")
 	_ = fs.Parse(args)
+
+	// Resolve the access key: explicit --key wins, then the env var, then a
+	// fresh random per-run token. A short key is a footgun on a control
+	// channel that grants full desktop input, so require real entropy.
+	accessKey := *key
+	if accessKey == "" {
+		accessKey = os.Getenv("WINDOWCTL_REMOTE_KEY")
+	}
+	if accessKey != "" && len(accessKey) < 16 {
+		fmt.Fprintln(os.Stderr, "windowctl remote: --key must be at least 16 characters (it is the only thing gating desktop control)")
+		os.Exit(2)
+	}
+	if accessKey == "" {
+		accessKey = mustToken()
+	}
 
 	if *fps < 1 {
 		*fps = 1
@@ -67,7 +85,7 @@ func remoteCmd(args []string) {
 
 	srv := &remoteServer{
 		defaultMonitor: monitorID,
-		token:          mustToken(),
+		token:          accessKey,
 		frameInterval:  time.Duration(float64(time.Second) / *fps),
 		quality:        60,
 	}
