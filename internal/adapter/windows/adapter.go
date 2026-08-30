@@ -24,7 +24,6 @@ var (
 	procGetWindowTextLenW   = user32.NewProc("GetWindowTextLengthW")
 	procIsWindowVisible     = user32.NewProc("IsWindowVisible")
 	procGetWindowRect       = user32.NewProc("GetWindowRect")
-	procMoveWindow          = user32.NewProc("MoveWindow")
 	procSetForegroundWnd    = user32.NewProc("SetForegroundWindow")
 	procGetWindowThreadPID  = user32.NewProc("GetWindowThreadProcessId")
 	procEnumDisplayMonitors = user32.NewProc("EnumDisplayMonitors")
@@ -77,22 +76,21 @@ func (a *Adapter) ListWindows() ([]core.Window, error) {
 		procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), titleLen+1)
 		title := windows.UTF16ToString(buf)
 
+		// IsWindowVisible is necessary but not sufficient: it is true for
+		// compositor-cloaked UWP apps, tool palettes, and the desktop itself.
+		if !listable(hwnd, title) {
+			return 1
+		}
+
 		var pid uint32
 		procGetWindowThreadPID.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
 
-		var r rect
-		procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
-
 		out = append(out, core.Window{
-			ID:    fmt.Sprintf("%d", hwnd),
-			Title: title,
-			PID:   int(pid),
-			Bounds: core.Rect{
-				X: int(r.Left),
-				Y: int(r.Top),
-				W: int(r.Right - r.Left),
-				H: int(r.Bottom - r.Top),
-			},
+			ID:     fmt.Sprintf("%d", hwnd),
+			Title:  title,
+			App:    appName(pid),
+			PID:    int(pid),
+			Bounds: frameBounds(hwnd),
 		})
 		return 1
 	})
@@ -185,9 +183,10 @@ func (a *Adapter) Move(id string, b core.Rect) error {
 	if err != nil {
 		return err
 	}
-	ret, _, err := procMoveWindow.Call(hwnd, uintptr(b.X), uintptr(b.Y), uintptr(b.W), uintptr(b.H), 1)
-	if ret == 0 {
-		return fmt.Errorf("MoveWindow %s: %w", id, err)
+	// positionFrame, not MoveWindow: the caller means the visible rectangle,
+	// and Windows positions the larger layout rectangle.
+	if err := positionFrame(hwnd, b); err != nil {
+		return fmt.Errorf("position %s: %w", id, err)
 	}
 	// Post-move sanity check: re-read the actual window rect and
 	// compare against the requested bounds. MoveWindow reports success
@@ -213,18 +212,16 @@ func (a *Adapter) Move(id string, b core.Rect) error {
 // 300ms total elapses. Same shape as darwin's settledWindowBounds —
 // see the comment there for the rationale.
 func settledHwndBounds(hwnd uintptr, requested core.Rect) (core.Rect, bool) {
+	// Read the same rectangle Move positions — the visible frame. Comparing the
+	// layout rectangle against a requested frame rectangle would differ by the
+	// invisible border on every axis, which is wider than the tolerance, so
+	// every successful move would be reported as an OS clamp.
 	read := func() (core.Rect, bool) {
-		var r rect
-		ret, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
-		if ret == 0 {
+		bounds := frameBounds(hwnd)
+		if bounds.W <= 0 && bounds.H <= 0 {
 			return core.Rect{}, false
 		}
-		return core.Rect{
-			X: int(r.Left),
-			Y: int(r.Top),
-			W: int(r.Right - r.Left),
-			H: int(r.Bottom - r.Top),
-		}, true
+		return bounds, true
 	}
 	actual, ok := read()
 	if !ok {
@@ -277,9 +274,8 @@ func (a *Adapter) Focus(id string) error {
 	if err != nil {
 		return err
 	}
-	ret, _, err := procSetForegroundWnd.Call(hwnd)
-	if ret == 0 {
-		return fmt.Errorf("SetForegroundWindow %s: %w", id, err)
+	if err := foreground(hwnd); err != nil {
+		return fmt.Errorf("focus %s: %w", id, err)
 	}
 	return nil
 }

@@ -24,17 +24,17 @@ import (
 )
 
 var (
-	gdi32                   = windows.NewLazySystemDLL("gdi32.dll")
-	procGetDC               = user32.NewProc("GetDC")
-	procReleaseDC           = user32.NewProc("ReleaseDC")
-	procSetCursorPos        = user32.NewProc("SetCursorPos")
-	procSendInput           = user32.NewProc("SendInput")
-	procCreateCompatibleDC  = gdi32.NewProc("CreateCompatibleDC")
-	procCreateDIBSection    = gdi32.NewProc("CreateDIBSection")
-	procSelectObject        = gdi32.NewProc("SelectObject")
-	procBitBlt              = gdi32.NewProc("BitBlt")
-	procDeleteDC            = gdi32.NewProc("DeleteDC")
-	procDeleteObject        = gdi32.NewProc("DeleteObject")
+	gdi32                  = windows.NewLazySystemDLL("gdi32.dll")
+	procGetDC              = user32.NewProc("GetDC")
+	procReleaseDC          = user32.NewProc("ReleaseDC")
+	procSetCursorPos       = user32.NewProc("SetCursorPos")
+	procSendInput          = user32.NewProc("SendInput")
+	procCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
+	procCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
+	procSelectObject       = gdi32.NewProc("SelectObject")
+	procBitBlt             = gdi32.NewProc("BitBlt")
+	procDeleteDC           = gdi32.NewProc("DeleteDC")
+	procDeleteObject       = gdi32.NewProc("DeleteObject")
 )
 
 type bitmapInfoHeader struct {
@@ -123,8 +123,8 @@ func (a *Adapter) CaptureRect(bounds core.Rect, outPath string) error {
 // keyboard variant below pads itself up to the same 40-byte total so
 // SendInput's cbSize check passes for both.
 type mouseEventInput struct {
-	Type uint32
-	_    uint32 // union alignment padding on 64-bit
+	Type      uint32
+	_         uint32 // union alignment padding on 64-bit
 	Dx        int32
 	Dy        int32
 	MouseData uint32
@@ -135,8 +135,8 @@ type mouseEventInput struct {
 }
 
 type keyboardEventInput struct {
-	Type uint32
-	_    uint32
+	Type      uint32
+	_         uint32
 	WVk       uint16
 	WScan     uint16
 	DwFlags   uint32
@@ -228,20 +228,39 @@ func (a *Adapter) CursorPosition() (int, int, error) {
 	return int(p.X), int(p.Y), nil
 }
 
+// typeKeyDelay paces injected keystrokes.
+//
+// Sending a whole string as one SendInput batch is accepted by the OS and then
+// mangled by the target: WinUI and Chromium apps process injected input on
+// their own thread, and a burst arrives faster than that thread drains it, so
+// characters are dropped or repeated. Typing "hello from agentic-os" into
+// Windows 11 Notepad produced "hello sssssssssssssss" — the right length, with
+// every character after the first word replaced by the last one.
+//
+// The other platforms already pace: the Linux adapter passes `--delay 12` to
+// xdotool. This matches that behaviour, a little faster.
+const typeKeyDelay = 5 * time.Millisecond
+
 func (a *Adapter) TypeText(text string) error {
 	units := windows.StringToUTF16(text)
 	units = units[:len(units)-1] // drop the NUL terminator
-	var events []keyboardEventInput
-	for _, u := range units {
-		events = append(events,
-			keyboardEventInput{Type: inputKeyboard, WScan: u, DwFlags: keyeventfUnicode},
-			keyboardEventInput{Type: inputKeyboard, WScan: u, DwFlags: keyeventfUnicode | keyeventfKeyUp},
-		)
-	}
-	if len(events) == 0 {
+	if len(units) == 0 {
 		return nil
 	}
-	return sendKeyboardInputs(events)
+
+	// One character per call — a down/up pair — so the target's input queue is
+	// never handed more than it can drain.
+	for i, u := range units {
+		events := []keyboardEventInput{
+			{Type: inputKeyboard, WScan: u, DwFlags: keyeventfUnicode},
+			{Type: inputKeyboard, WScan: u, DwFlags: keyeventfUnicode | keyeventfKeyUp},
+		}
+		if err := sendKeyboardInputs(events); err != nil {
+			return fmt.Errorf("typing %q at character %d: %w", text, i+1, err)
+		}
+		time.Sleep(typeKeyDelay)
+	}
+	return nil
 }
 
 // windowsVKCodes maps normalized key names to Win32 virtual-key codes.

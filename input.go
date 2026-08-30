@@ -138,6 +138,11 @@ func pressKeyIntoWith(a Adapter, match Match, combo string) error {
 // window system to report the matched window as focused.
 const focusVerifyTimeout = 2 * time.Second
 
+// focusSettleDelay is how long to let a freshly focused application ready its
+// input before keystrokes are sent to it. Short enough to be invisible in a
+// script, long enough to cover an app still painting its first frame.
+const focusSettleDelay = 150 * time.Millisecond
+
 // ensureFocused raises the matched window and blocks until the window
 // list reports it Focused. On platforms whose adapter cannot say which
 // monitor holds focus (no Monitor.Focused flag — linux today) the
@@ -169,6 +174,14 @@ func ensureFocused(a Adapter, match Match) error {
 		}
 		for _, w := range ws {
 			if w.Focused {
+				// A window reports focused as soon as the OS gives it the
+				// keyboard, which is before the application has a caret ready
+				// to receive characters. Typing into that gap is silently
+				// lossy: Windows 11 Notepad, typed into the instant it was
+				// focused, turned "hello from agentic-os" into
+				// "hello sssssssssssssss" while the very next line typed
+				// cleanly. Let the app settle before the first keystroke.
+				sleepFn(focusSettleDelay)
 				return nil
 			}
 		}
