@@ -34,10 +34,42 @@ func TestParseZoneAcceptsValidSplits(t *testing.T) {
 }
 
 func TestParseZoneRejectsInvalidSplits(t *testing.T) {
-	for _, in := range []string{"0:1", "3:0", "3:4", "3:-1", "abc:1", "3:abc", ":", "3:"} {
+	// "3:4" is no longer here: with both orderings accepted it is the third of
+	// four, which is a real zone.
+	for _, in := range []string{"0:1", "3:0", "3:-1", "abc:1", "3:abc", ":", "3:"} {
 		if _, err := ParseZone(in); err == nil {
 			t.Fatalf("ParseZone(%q) expected error", in)
 		}
+	}
+}
+
+// TestParseSplitAcceptsEitherOrder is the point of accepting both: "the M-th of
+// N" and "N parts, the M-th" name the same rectangle, and people say the first.
+func TestParseSplitAcceptsEitherOrder(t *testing.T) {
+	screen := mon(0, 0, 1200, 900)
+	for _, pair := range [][2]string{{"1:2", "2:1"}, {"1:3", "3:1"}, {"2:3", "3:2"}, {"3:10", "10:3"}} {
+		spoken, err := ParseZone(pair[0])
+		if err != nil {
+			t.Fatalf("ParseZone(%q): %v", pair[0], err)
+		}
+		legacy, err := ParseZone(pair[1])
+		if err != nil {
+			t.Fatalf("ParseZone(%q): %v", pair[1], err)
+		}
+		if spoken.Rect(screen) != legacy.Rect(screen) {
+			t.Errorf("%s and %s should be the same rectangle: %+v vs %+v",
+				pair[0], pair[1], spoken.Rect(screen), legacy.Rect(screen))
+		}
+	}
+
+	// 1:2 is the LEFT half, not the right one.
+	left, _ := ParseZone("1:2")
+	if r := left.Rect(screen); r.X != 0 || r.W != 600 {
+		t.Errorf("1:2 = %+v, want the left half", r)
+	}
+	right, _ := ParseZone("2:2")
+	if r := right.Rect(screen); r.X != 600 {
+		t.Errorf("2:2 = %+v, want the right half", r)
 	}
 }
 
@@ -180,8 +212,10 @@ func TestEnumZoneRectOnTinyMonitorIsExactHalves(t *testing.T) {
 	}
 }
 
+// TestZoneStringRoundtrip also pins the printed order: a split renders the way
+// it is spoken, the M-th of N, which is the form a person types.
 func TestZoneStringRoundtrip(t *testing.T) {
-	for _, in := range []string{"1A", "2D", "3:2", "10:5"} {
+	for _, in := range []string{"1A", "2D", "2:3", "5:10"} {
 		z, err := ParseZone(in)
 		if err != nil {
 			t.Fatalf("ParseZone(%q): %v", in, err)

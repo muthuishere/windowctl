@@ -1,0 +1,279 @@
+---
+title: windowctl
+description: Move, resize, focus and tile windows across every monitor — one static binary on macOS, Windows and Linux. Plus a device layer that types, clicks, screenshots and captures the screen.
+template: splash
+head:
+  # Without this the tag renders as "windowctl | windowctl" — the page title
+  # and the site title are the same word on the landing page only.
+  - tag: title
+    content: windowctl — tile every window from the command line
+hero:
+  tagline: Put every window exactly where it belongs — from a script, from Go, or from plain English. One static binary, three platforms, no daemon.
+  actions:
+    - text: Quickstart
+      link: /quickstart/
+      icon: right-arrow
+    - text: Zones & splits
+      link: /zones/
+      icon: right-arrow
+      variant: minimal
+    - text: GitHub
+      link: https://github.com/muthuishere/windowctl
+      icon: external
+      variant: minimal
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+```sh
+npm install -g @muthuishere/windowctl
+
+windowctl move --app "Google Chrome" --zone 1A     # left half
+windowctl move --app "Slack" --monitor 2 --zone 2B # top-right of the second display
+```
+
+<p class="wc-lede">
+That is the whole product surface for the common case. No config file, no
+daemon to keep running, no menu-bar app. A window manager you can call from a
+shell script, a Makefile, a Go program, or an AI agent.
+</p>
+
+<dl class="wc-facts">
+	<div class="wc-fact">
+		<dt>Platforms</dt>
+		<dd>3<small>macOS · Windows · Linux, one codebase</small></dd>
+	</div>
+	<div class="wc-fact">
+		<dt>Install</dt>
+		<dd>1 binary<small>no runtime, no daemon, no postinstall</small></dd>
+	</div>
+	<div class="wc-fact">
+		<dt>Screenshot</dt>
+		<dd>110 ms<small>1920×1080 via ScreenCaptureKit (spike S5)</small></dd>
+	</div>
+	<div class="wc-fact">
+		<dt>Stream round-trip</dt>
+		<dd>0.047 ms<small>p50, 10 ms audio frame on loopback (spike S0)</small></dd>
+	</div>
+</dl>
+
+## Zones are the whole idea
+
+A zone is a name for a rectangle. You never compute pixels, and you never care
+which monitor is which resolution.
+
+<div class="wc-zones">
+	<figure class="wc-zone-card">
+		<div class="wc-screen wc-screen--halves">
+			<div class="wc-tile wc-tile--on">1A</div>
+			<div class="wc-tile">1B</div>
+		</div>
+		<figcaption>--zone 1A<span>Left half</span></figcaption>
+	</figure>
+	<figure class="wc-zone-card">
+		<div class="wc-screen wc-screen--quarters">
+			<div class="wc-tile">2A</div>
+			<div class="wc-tile wc-tile--on">2B</div>
+			<div class="wc-tile">2C</div>
+			<div class="wc-tile">2D</div>
+		</div>
+		<figcaption>--zone 2B<span>Top-right quarter</span></figcaption>
+	</figure>
+	<figure class="wc-zone-card">
+		<div class="wc-screen wc-screen--thirds">
+			<div class="wc-tile">1</div>
+			<div class="wc-tile wc-tile--on">2</div>
+			<div class="wc-tile">3</div>
+		</div>
+		<figcaption>--zone 3:2<span>Middle third — any N:M split</span></figcaption>
+	</figure>
+</div>
+
+Omit `--monitor` and the window stays on the display it is already on — resolved
+by majority overlap, not by guessing from its top-left corner. Pass `--monitor 2`
+and it moves there and snaps. Monitors are **1-indexed by ascending (X, Y)**, so
+the leftmost display is always `1`, and the numbering survives a reboot or a
+re-plug.
+
+<div class="wc-desk">
+	<div class="wc-monitor">
+		<div class="wc-monitor-label"><span>monitor <b>1</b></span><span>laptop</span></div>
+		<div class="wc-screen wc-screen--halves">
+			<div class="wc-tile wc-tile--on">code</div>
+			<div class="wc-tile">term</div>
+		</div>
+	</div>
+	<div class="wc-monitor">
+		<div class="wc-monitor-label"><span>monitor <b>2</b></span><span>external · active</span></div>
+		<div class="wc-screen wc-screen--quarters">
+			<div class="wc-tile">jira</div>
+			<div class="wc-tile wc-tile--on">chrome</div>
+			<div class="wc-tile">slack</div>
+			<div class="wc-tile">logs</div>
+		</div>
+	</div>
+</div>
+
+## One call, one layout
+
+`windowctl batch` takes a JSON array and applies the whole arrangement — the
+thing you actually want when you sit down to work.
+
+```sh
+cat work-mode.json | windowctl batch --json
+```
+
+```json
+[
+  { "app": "Google Chrome", "monitor": 2, "zone": "2B" },
+  { "app": "Code",          "monitor": 1, "zone": "1A" },
+  { "title": "Terminal",    "monitor": 1, "zone": "1B" },
+  { "app": "Slack",         "monitor": 2, "zone": "2C" }
+]
+```
+
+Every entry reports its own result, so a layout that half-applies tells you
+exactly which window resisted — including when the OS clamps a move rather than
+honouring it:
+
+```
+windowctl: requested 512x640 at (3840,30), OS clamped to 576x615 at (3840,55)
+           (likely a minimum-window-size constraint)
+```
+
+## It reads the desktop, not just writes to it
+
+<Tabs>
+<TabItem label="Windows">
+```sh
+$ windowctl windows list --app "Google Chrome" --json
+```
+```json
+[
+  {
+    "ID": 24815, "App": "Google Chrome", "Title": "windowctl — GitHub",
+    "Bounds": { "X": 1920, "Y": 25, "W": 1920, "H": 1055 },
+    "Monitor": 2, "Focused": true
+  }
+]
+```
+`Monitor` and `Focused` are stamped on the **unfiltered** list before your
+filter runs — so they mean the same thing no matter what you filtered out.
+</TabItem>
+<TabItem label="Monitors">
+```sh
+$ windowctl monitors list
+ID  NAME              BOUNDS                PRIMARY  ACTIVE
+1   Built-in Display  0,0 1920x1200         true     false
+2   DELL U2723QE      1920,0 3840x2160      false    true
+```
+`ACTIVE` is the monitor the cursor is on. Map "the external", "the one I'm
+looking at", "where my cursor is" to an integer, then pass `--monitor`.
+</TabItem>
+<TabItem label="Go">
+```go
+import windowctl "github.com/muthuishere/windowctl"
+
+ws, err := windowctl.ListWindows(windowctl.Filter{App: "Google Chrome"})
+err = windowctl.MoveZone(windowctl.Target{App: "Google Chrome"}, 2, "2B")
+```
+The CLI is a thin shell over the library — same behaviour, no shelling out to a
+binary you then have to ship.
+</TabItem>
+</Tabs>
+
+## Plain English, if you'd rather
+
+The agent skill ships **inside the binary**. No package to find, no repo to
+clone, no network:
+
+```sh
+windowctl install skills
+```
+
+> *"split chrome left, slack right"* · *"send vscode to my external"* ·
+> *"put everything back to work mode"*
+
+It writes `window-ctl-skill` into `~/.claude/skills/` (and `~/.agents/skills/`
+when Codex is installed). The skill is the routing layer; every action is still
+one `windowctl` call you could have typed yourself.
+
+## There is a second half: the device layer
+
+The same binary is a headless robot body for testing apps that use the mic,
+camera, screen and keyboard — over a loopback WebSocket with a token and a
+per-stream ticket.
+
+```sh
+windowctl type "hello"          windowctl screenshot --out shot.png
+windowctl key cmd+shift+t       windowctl click --x 400 --y 300
+windowctl serve --port 9099     windowctl start video-out --port 9100
+```
+
+This half is newer, and the honest state of it is:
+
+<table class="wc-status">
+	<thead>
+		<tr><th>Surface</th><th>State</th><th>Detail</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>Keyboard, mouse, chords, drag</td>
+			<td><span class="wc-badge wc-badge--yes">working</span></td>
+			<td>CGEvent injection, verified round-trip</td>
+		</tr>
+		<tr>
+			<td>Screenshot + screen capture</td>
+			<td><span class="wc-badge wc-badge--yes">working</span></td>
+			<td>ScreenCaptureKit; 1920×1080 in 110 ms</td>
+		</tr>
+		<tr>
+			<td>Audio device list / set default</td>
+			<td><span class="wc-badge wc-badge--yes">working</span></td>
+			<td>CoreAudio; reversible, restores the prior default</td>
+		</tr>
+		<tr>
+			<td>Speaker loopback (audio-out)</td>
+			<td><span class="wc-badge wc-badge--partial">frames flow</span></td>
+			<td>Process tap delivers samples; non-silent audio needs the system-audio permission</td>
+		</tr>
+		<tr>
+			<td>Virtual microphone (audio-in)</td>
+			<td><span class="wc-badge wc-badge--partial">driver built</span></td>
+			<td>Our own CoreAudio plugin; loading it needs a notarized Developer ID build</td>
+		</tr>
+		<tr>
+			<td>Virtual camera (video-in)</td>
+			<td><span class="wc-badge wc-badge--no">not built</span></td>
+			<td>CoreMediaIO extension, designed in ADR 0006</td>
+		</tr>
+		<tr>
+			<td>Device layer on Windows</td>
+			<td><span class="wc-badge wc-badge--no">not built</span></td>
+			<td>Window control is fully supported there; the device layer is macOS-only so far</td>
+		</tr>
+	</tbody>
+</table>
+
+Every row is backed by a runnable spike in the repo and an ADR saying why the
+decision went that way — including the ones that came back negative.
+
+## Why it is built this way
+
+- **A tiny adapter surface.** Six primitives per OS (`ListWindows`,
+  `ListMonitors`, `Move`, `Focus`, and two permission calls). Everything that can
+  be composed from those lives in the portable layer, so zone maths, monitor
+  resolution, and filter semantics are identical on every platform and unit
+  tested once.
+- **CGO where it counts, nowhere else.** macOS talks to CoreGraphics and the
+  Accessibility API directly — no AppleScript, no helper app, no private SPI.
+  Windows is `user32.dll`.
+- **Permissions are explicit.** On macOS the Accessibility prompt fires from
+  `windowctl permissions` or lazily from a move — never from `windows list`. A
+  denied permission is a descriptive error, never a silent no-op.
+- **Specs before code.** Every capability has an ADR, a runnable spike that
+  proved it on real hardware, and an OpenSpec slice — then an implementation.
+
+<p class="wc-lede">
+MIT licensed. <a href="/quickstart/">Start here →</a>
+</p>

@@ -67,23 +67,38 @@ type splitZone struct {
 	n, m int
 }
 
+// parseSplit reads a split zone, accepting either order of the two numbers.
+//
+// "the M-th of N" is how people say it out loud, so 1:2 is the left half and
+// 3:1 is the left third — and both readings can be supported without ambiguity.
+// A split has 1 <= M <= N, so in one ordering the first number is never smaller
+// than the second, and in the other it is never larger. The only strings both
+// readings accept are those where the numbers are equal (2:2, 3:3), and there
+// the two readings mean the same rectangle. So the larger number is N.
 func parseSplit(s string) (Zone, error) {
 	parts := strings.SplitN(s, ":", 2)
 	if len(parts) != 2 {
-		return nil, fmt.Errorf("zone: invalid split %q (expected N:M)", s)
+		return nil, fmt.Errorf("zone: invalid split %q (expected N:M or M:N, such as 1:2 or 2:1)", s)
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(parts[0]))
-	if err != nil || n <= 0 {
-		return nil, fmt.Errorf("zone: invalid split %q: N must be a positive integer", s)
+	first, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || first <= 0 {
+		return nil, fmt.Errorf("zone: invalid split %q: both numbers must be positive integers", s)
 	}
-	m, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if err != nil || m <= 0 || m > n {
-		return nil, fmt.Errorf("zone: invalid split %q: M must satisfy 1 <= M <= N", s)
+	second, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || second <= 0 {
+		return nil, fmt.Errorf("zone: invalid split %q: both numbers must be positive integers", s)
+	}
+
+	n, m := first, second
+	if second > first {
+		n, m = second, first
 	}
 	return splitZone{n: n, m: m}, nil
 }
 
-func (z splitZone) String() string { return fmt.Sprintf("%d:%d", z.n, z.m) }
+// String renders the spoken order — the M-th of N — because that is the form a
+// person types and the form the CLI prints back.
+func (z splitZone) String() string { return fmt.Sprintf("%d:%d", z.m, z.n) }
 
 func (z splitZone) Rect(mon Monitor) Rect {
 	cell := mon.Width / z.n
