@@ -9,17 +9,17 @@ import (
 )
 
 type mockAdapter struct {
-	windows           []Window
-	monitors          []Monitor
-	moved             map[string]Rect
-	focused           string
-	listErr           error
-	moveErr           error
-	focusErr          error
-	requestAXErr      error
-	requestAXCalled   int
-	checkAXResult     bool
-	checkAXCalled     int
+	windows         []Window
+	monitors        []Monitor
+	moved           map[string]Rect
+	focused         string
+	listErr         error
+	moveErr         error
+	focusErr        error
+	requestAXErr    error
+	requestAXCalled int
+	checkAXResult   bool
+	checkAXCalled   int
 
 	capturedRect Rect
 	capturedPath string
@@ -35,7 +35,7 @@ type mockAdapter struct {
 	launchedApp  string
 }
 
-func (m *mockAdapter) ListWindows() ([]Window, error)  { return m.windows, m.listErr }
+func (m *mockAdapter) ListWindows() ([]Window, error)   { return m.windows, m.listErr }
 func (m *mockAdapter) ListMonitors() ([]Monitor, error) { return m.monitors, nil }
 func (m *mockAdapter) Move(id string, b Rect) error {
 	if m.moveErr != nil {

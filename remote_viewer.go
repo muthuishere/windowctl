@@ -1,31 +1,9 @@
-package main
+package windowctl
 
 import (
-	"bufio"
-	"io"
-	"regexp"
 	"strconv"
 	"strings"
 )
-
-// trycloudflareRe matches the public URL cloudflared prints to stderr.
-var trycloudflareRe = regexp.MustCompile(`https://[a-z0-9-]+\.trycloudflare\.com`)
-
-// scanForTunnelURL reads cloudflared's stderr line by line and sends
-// the first trycloudflare URL it sees, then drains the rest so the
-// pipe never blocks the child.
-func scanForTunnelURL(r io.Reader, out chan<- string) {
-	sc := bufio.NewScanner(r)
-	sent := false
-	for sc.Scan() {
-		if !sent {
-			if m := trycloudflareRe.FindString(sc.Text()); m != "" {
-				out <- strings.TrimRight(m, "/")
-				sent = true
-			}
-		}
-	}
-}
 
 // remoteViewerHTML renders the single-page viewer. token is embedded so
 // every /frame and /input request carries it; pollMS is the frame poll
