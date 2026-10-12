@@ -176,6 +176,8 @@ func (s DrawSize) metrics() drawMetrics {
 		return drawMetrics{10, 46, 48, 30, 130}
 	case SizeL:
 		return drawMetrics{21, 84, 88, 60, 220}
+	case SizeXL:
+		return drawMetrics{27, 106, 110, 78, 270}
 	default:
 		return drawMetrics{15, 62, 64, 44, 170}
 	}
@@ -214,7 +216,7 @@ func (o *DrawOptions) validate() error {
 	}
 	var err error
 	var s string
-	if s, err = pick("style", string(o.Style), "arrow", "arrow", "ring", "box"); err != nil {
+	if s, err = pick("style", string(o.Style), "arrow", "arrow", "ring", "box", "text"); err != nil {
 		return err
 	}
 	o.Style = DrawStyle(s)
@@ -222,7 +224,7 @@ func (o *DrawOptions) validate() error {
 		return err
 	}
 	o.Shape = DrawShape(s)
-	if s, err = pick("size", string(o.Size), "M", "S", "M", "L"); err != nil {
+	if s, err = pick("size", string(o.Size), "M", "S", "M", "L", "XL"); err != nil {
 		return err
 	}
 	o.Size = DrawSize(s)
@@ -238,6 +240,19 @@ func (o *DrawOptions) validate() error {
 		return err
 	}
 	o.Animate = DrawAnimate(s)
+	// --position is the sign's side for arrow / ring / box (alias of From).
+	if o.Style != DrawText && o.Position != "" && o.From == "" {
+		switch p := DrawFrom(strings.ToLower(string(o.Position))); p {
+		case "center":
+			return fmt.Errorf("draw: position center only applies to --style text; for an arrow give the sign's side (top-left, top, right, ...)")
+		case "top-center":
+			o.From = "top"
+		case "bottom-center":
+			o.From = "bottom"
+		default:
+			o.From = p
+		}
+	}
 	if o.From == "auto" {
 		o.From = ""
 	}
@@ -251,7 +266,7 @@ func (o *DrawOptions) validate() error {
 		}
 		o.From = DrawFrom(strings.ToLower(string(o.From)))
 	}
-	if o.Color == nil {
+	if o.Color == nil && o.Style != DrawText {
 		c, _ := ParseColor("red")
 		o.Color = &c
 	}

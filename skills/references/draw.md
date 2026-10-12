@@ -36,10 +36,42 @@ ranking, roles, menus): `references/find.md`.
 Coordinates are the same as `screenshot` / `mouse`: read a pixel off a
 screenshot (plus the capture origin) and draw at it.
 
+## Text labels (no arrow)
+
+`windowctl draw text "..."` (= `--style text --text "..."`) puts a styled
+label inside a container — same lifecycle as arrows (`--duration`,
+`--detach`, `draw stop`, `--preview`, fade + slide in, no pulse).
+
+```sh
+windowctl draw text "Step 2: pick a file" --app Finder --position top-center --color amber
+windowctl draw text "Done ✓" --monitor 2 --position center --size XL --color green
+windowctl draw text "Saving…" --rect 100,100,800,500 --position bottom-right --bg none
+windowctl draw text "Line one\nLine two" --at 600,400 --position right --align left
+```
+
+- Container: `--app`/`--title` (that window), `--rect X,Y,W,H`, `--monitor N`
+  alone (that monitor; default = the monitor with focus), or `--at X,Y` /
+  `--mouse` (the label sits on the `--position` side of that point).
+- `--position bottom-center` (default) `| top-center | center | left | right |
+  top-left | top-right | bottom-left | bottom-right` (`top`/`bottom` = the
+  `-center` ones) · `--margin px|N%` · `--offset DX,DY`.
+- Look: `--color` (the TEXT colour, default white) · `--bg auto|none|COLOR`
+  (auto = translucent contrasting pill) · `--size S|M|L|XL` (default M) ·
+  `--font` · `--font-scale` · `--weight regular|bold` · `--align left|center|right`
+  (default follows the position) · `--max-width px|N%` · `\n` for line breaks.
+- Defaults follow the film/broadcast subtitle convention (Netflix/BBC
+  title-safe): bottom margin 8% of the container height, 5% side safe
+  area, lines at most 80% of the container width, at most 2 lines before
+  the font shrinks. Subtitles (aos) also size the font at ~4.75% of the
+  container height (18–64 pt).
+
+For arrow / ring / box, `--position` is the side the sign sits on (alias
+of `--from`; `center` is text-only).
+
 ## Look
 
 `--style arrow|ring|box` · `--shape bend|straight|zigzag|spiral` ·
-`--size S|M|L` · `--color red|orange|amber|yellow|green|teal|blue|purple|pink|black|white|#RRGGBB` ·
+`--size S|M|L|XL` · `--color red|orange|amber|yellow|green|teal|blue|purple|pink|black|white|#RRGGBB` ·
 `--border shadow|white-black|black` · `--corners round|sharp` ·
 `--from auto|top-left|top|top-right|left|right|bottom-left|bottom|bottom-right` ·
 `--font <name|path>` · `--font-scale 1.2`.
@@ -52,7 +84,18 @@ new sign keeps clear of the live ones.
 
 `~/.config/windowctl/fontconfig.json` (same on Windows). Create with
 `windowctl draw config --init`; show with `windowctl draw config`; list
-fonts with `windowctl draw fonts`. Flags override it.
+fonts with `windowctl draw fonts`. Flags override it. Text labels and
+subtitles have their own blocks (the top-level look keys are for arrows):
+
+```json
+{
+  "font": "Arial Rounded Bold",
+  "text":     { "color": "white", "bg": "auto", "size": "M", "position": "bottom-center" },
+  "subtitle": { "color": "white", "bg": "auto", "position": "bottom-center", "font": "", "margin": "8%" }
+}
+```
+
+Keys in each block: color, bg, font, size, position, align, weight, margin, maxWidth.
 
 ## Recipe: verified pointing
 

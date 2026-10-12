@@ -175,6 +175,10 @@ func (sc *drawScene) animCrop(final *image.RGBA) (image.Rectangle, Rect) {
 // frame renders the drawing in pose, cropped to r.
 func (sc *drawScene) frame(r image.Rectangle, pose drawPose) *image.RGBA {
 	cv := newCanvasIn(r, sc.px)
+	if sc.text != nil {
+		renderTextPose(cv, sc.text, pose)
+		return cv.img
+	}
 	renderLayoutPose(cv, sc.lay, sc.st, sc.look, pose)
 	return cv.img
 }
@@ -311,7 +315,7 @@ func animateDraw(a core.OverlayAnimator, sc *drawScene, final *image.RGBA, done 
 	var pa pulseAnim
 	shown := clock()
 	for !done() {
-		if reduce {
+		if reduce || sc.text != nil { // text drawings never pulse
 			a.PumpOverlays(animIdle)
 			continue
 		}
@@ -392,6 +396,9 @@ func RenderDrawGIF(opts DrawOptions, outPath string) (DrawResult, error) {
 func (sc *drawScene) entranceGIF() *gif.GIF {
 	final := sc.render()
 	pr, _ := sc.animCrop(final)
+	if sc.text != nil {
+		return sc.textGIF(final, pr)
+	}
 	pa := sc.pulseFrames()
 	p0 := image.Pt(int(math.Round(pa.unit.X*sc.px)), int(math.Round(pa.unit.Y*sc.px)))
 	pulseR := image.Rectangle{Min: p0, Max: p0.Add(pa.frames[0].Rect.Size())}
@@ -421,5 +428,24 @@ func (sc *drawScene) entranceGIF() *gif.GIF {
 		add(finalCrop, 3, pa.frames[idx], alpha)
 	}
 	add(finalCrop, 100, nil, 0)
+	return g
+}
+
+// textGIF is the text drawing's entrance (fade + slide), no pulse.
+func (sc *drawScene) textGIF(final *image.RGBA, r image.Rectangle) *gif.GIF {
+	g := &gif.GIF{}
+	add := func(img *image.RGBA, delay int) {
+		bg := image.NewRGBA(r)
+		draw.Draw(bg, r, image.NewUniform(color.RGBA{0x55, 0x60, 0x6E, 0xFF}), image.Point{}, draw.Src)
+		draw.Draw(bg, img.Rect, img, img.Rect.Min, draw.Over)
+		pal := image.NewPaletted(image.Rect(0, 0, r.Dx(), r.Dy()), palette.Plan9)
+		draw.FloydSteinberg.Draw(pal, pal.Rect, bg, r.Min)
+		g.Image = append(g.Image, pal)
+		g.Delay = append(g.Delay, delay)
+	}
+	for t := time.Duration(0); t < animEntrance; t += 33 * time.Millisecond {
+		add(sc.frame(r, entrancePose(t, sc.lay.uiScale)), 3)
+	}
+	add(cropCopy(final, r), 150)
 	return g
 }

@@ -21,9 +21,14 @@ import (
 // DrawChildEnv is set to "1" in the environment of a detached drawing.
 const DrawChildEnv = "WINDOWCTL_DRAW_CHILD"
 
+// DrawTagEnv carries a detached drawing's tag (e.g. "subtitle") from
+// SpawnDetachedDrawTagged to RegisterDrawing.
+const DrawTagEnv = "WINDOWCTL_DRAW_TAG"
+
 type drawEntry struct {
 	PID    int        `json:"PID"`
 	Result DrawResult `json:"Result"`
+	Tag    string     `json:"Tag,omitempty"`
 }
 
 func drawRegistryDir() string {
@@ -58,7 +63,7 @@ func IsDrawChild() bool { return os.Getenv(DrawChildEnv) == "1" }
 // waiting in SpawnDetachedDraw returns as soon as it appears.
 func RegisterDrawing(res DrawResult) {
 	_ = os.MkdirAll(drawRegistryDir(), 0o755)
-	b, _ := json.Marshal(drawEntry{PID: os.Getpid(), Result: res})
+	b, _ := json.Marshal(drawEntry{PID: os.Getpid(), Result: res, Tag: os.Getenv(DrawTagEnv)})
 	tmp := drawEntryPath(os.Getpid()) + ".tmp"
 	if os.WriteFile(tmp, b, 0o644) == nil {
 		_ = os.Rename(tmp, drawEntryPath(os.Getpid()))
@@ -94,9 +99,15 @@ func LiveDrawingSigns() []Rect {
 }
 
 // StopDrawings ends every live drawing and returns how many it stopped.
-func StopDrawings() int {
+func StopDrawings() int { return StopDrawingsTagged("") }
+
+// StopDrawingsTagged ends the live drawings with this tag ("" = all).
+func StopDrawingsTagged(tag string) int {
 	n := 0
 	for _, e := range liveDrawings() {
+		if tag != "" && e.Tag != tag {
+			continue
+		}
 		if stopProcess(e.PID) == nil {
 			n++
 		}
@@ -111,12 +122,18 @@ func StopDrawings() int {
 // it registers so the caller learns where the drawing landed — or why it
 // failed — before returning. The child must call RegisterDrawing.
 func SpawnDetachedDraw(args []string) (DrawResult, error) {
+	return SpawnDetachedDrawTagged(args, "")
+}
+
+// SpawnDetachedDrawTagged is SpawnDetachedDraw with a tag recorded in the
+// registry, so StopDrawingsTagged can end just that kind of drawing.
+func SpawnDetachedDrawTagged(args []string, tag string) (DrawResult, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return DrawResult{}, err
 	}
 	cmd := exec.Command(exe, args...)
-	cmd.Env = append(os.Environ(), DrawChildEnv+"=1")
+	cmd.Env = append(os.Environ(), DrawChildEnv+"=1", DrawTagEnv+"="+tag)
 	errPath := filepath.Join(os.TempDir(), fmt.Sprintf("windowctl-draw-%d.err", time.Now().UnixNano()))
 	errFile, err := os.Create(errPath)
 	if err != nil {

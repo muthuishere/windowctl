@@ -39,6 +39,25 @@ type DrawConfig struct {
 	// Animate is "on" / "off" (or true / false): the entrance, pulse and
 	// fade-out of a shown drawing.
 	Animate AnimateSetting `json:"animate,omitempty"`
+
+	// Text and Subtitle are the defaults of `draw --style text` and of
+	// subtitles. The top-level look keys above apply to arrow / ring /
+	// box only (and font / fontScale to all, unless set here).
+	Text     *TextConfig `json:"text,omitempty"`
+	Subtitle *TextConfig `json:"subtitle,omitempty"`
+}
+
+// TextConfig is the defaults block of a text drawing or subtitle.
+type TextConfig struct {
+	Color    string `json:"color,omitempty"`    // text colour: preset or #RRGGBB
+	Bg       string `json:"bg,omitempty"`       // auto, none, or a colour
+	Font     string `json:"font,omitempty"`     // file path or system font name
+	Size     string `json:"size,omitempty"`     // S, M, L, XL
+	Position string `json:"position,omitempty"` // bottom-center, top-center, center, top-left, ...
+	Align    string `json:"align,omitempty"`    // left, center, right
+	Weight   string `json:"weight,omitempty"`   // regular, bold
+	Margin   string `json:"margin,omitempty"`   // px or N%
+	MaxWidth string `json:"maxWidth,omitempty"` // px or N%
 }
 
 // AnimateSetting reads "on" / "off" or a JSON boolean.
@@ -70,6 +89,8 @@ func DefaultDrawConfig() DrawConfig {
 	return DrawConfig{
 		Font: font, FontScale: 1, Color: "red", Size: "M", Style: "arrow",
 		Shape: "bend", Border: "shadow", Corners: "round", From: "auto", Animate: "on",
+		Text:     &TextConfig{Color: "white", Bg: "auto", Size: "M", Position: "bottom-center"},
+		Subtitle: &TextConfig{Color: "white", Bg: "auto", Position: "bottom-center"},
 	}
 }
 
@@ -130,6 +151,36 @@ func (o *DrawOptions) applyConfig(c DrawConfig) error {
 		if *dst == "" {
 			*dst = v
 		}
+	}
+	if o.Style == DrawText {
+		t, name := c.Text, "text"
+		if o.Subtitle {
+			t, name = c.Subtitle, "subtitle"
+		}
+		if t != nil {
+			fill((*string)(&o.Size), t.Size)
+			fill((*string)(&o.Position), t.Position)
+			fill(&o.Background, t.Bg)
+			fill(&o.Align, t.Align)
+			fill(&o.Weight, t.Weight)
+			fill(&o.Margin, t.Margin)
+			fill(&o.MaxWidth, t.MaxWidth)
+			fill(&o.Font, t.Font)
+			if o.Color == nil && t.Color != "" {
+				col, err := ParseColor(t.Color)
+				if err != nil {
+					return fmt.Errorf("draw: %s.color in %s: %w", name, DrawConfigPath(), err)
+				}
+				o.Color = &col
+			}
+		}
+		fill((*string)(&o.Corners), c.Corners)
+		fill((*string)(&o.Animate), string(c.Animate))
+		fill(&o.Font, c.Font)
+		if o.FontScale == 0 {
+			o.FontScale = c.FontScale
+		}
+		return nil
 	}
 	fill((*string)(&o.Style), c.Style)
 	fill((*string)(&o.Shape), c.Shape)

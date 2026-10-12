@@ -29,6 +29,14 @@ func drawCmd(args []string) {
 		case "config":
 			drawConfigCmd(args[1:])
 			return
+		case "text":
+			// `draw text "label" [flags]` = `draw --style text --text "label" [flags]`.
+			rest := args[1:]
+			if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+				args = append([]string{"--style", "text", "--text", rest[0]}, rest[1:]...)
+			} else {
+				args = append([]string{"--style", "text"}, rest...)
+			}
 		case "fonts":
 			for _, f := range windowctl.ListFonts() {
 				fmt.Println(f)
@@ -39,6 +47,7 @@ func drawCmd(args []string) {
 	fs := flag.NewFlagSet("draw", flag.ExitOnError)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `usage: windowctl draw <target> --text "..." [look] [--duration S] [--detach] [--animate on|off] [--preview out.png] [--preview-gif out.gif] [--json]
+       windowctl draw text "label" [place] [look]   a label, no arrow (= --style text)
        windowctl draw stop            remove every detached drawing
        windowctl draw config [--init] show / create ~/.config/windowctl/fontconfig.json
        windowctl draw fonts           list font names usable with --font
@@ -48,6 +57,14 @@ targets (exactly one):
   --title T / --app A the window       --mouse            the cursor
   --monitor N         makes --at / --rect relative to monitor N
   --title/--app + --find TEXT   circle that text inside the window (see also: windowctl find)
+
+--style text places a label inside a container instead of pointing:
+  --title/--app (that window), --rect, --monitor N alone (that monitor;
+  default the one with focus), or --at / --mouse (beside that point);
+  --position bottom-center (default) | top-center | center | left | right |
+  top-left | top-right | bottom-left | bottom-right; --margin px|N% (default
+  the subtitle safe area: 8% top/bottom, 5% sides); --offset DX,DY;
+  --bg auto|none|COLOR; --align; --max-width px|N% (80%); --weight; \n for lines.
 
 `)
 		fs.PrintDefaults()
@@ -64,9 +81,16 @@ targets (exactly one):
 	findNth := fs.Int("nth", 0, "for --find: use the n-th best match (1-based)")
 	monitor := fs.Int("monitor", 0, "monitor (>=1) that --at / --rect are relative to")
 	text := fs.String("text", "", "the sign's text (required)")
-	style := fs.String("style", "", "arrow | ring | box")
+	style := fs.String("style", "", "arrow | ring | box | text")
+	position := fs.String("position", "", "text: where in the container (bottom-center default, top-center, center, left, right, top-left, ...); arrow/ring/box: the sign's side (alias of --from)")
+	margin := fs.String("margin", "", "text: distance from the container edge, px or N% (default 8% top/bottom, 5% sides)")
+	offset := fs.String("offset", "", "text: nudge by DX,DY")
+	bg := fs.String("bg", "", "text: background auto (translucent contrast) | none | colour")
+	align := fs.String("align", "", "text: left | center | right (default follows --position)")
+	maxWidth := fs.String("max-width", "", "text: wrap width, px or N% of the container (default 80%)")
+	weight := fs.String("weight", "", "text: regular | bold")
 	shape := fs.String("shape", "", "bend | straight | zigzag | spiral")
-	size := fs.String("size", "", "S | M | L")
+	size := fs.String("size", "", "S | M | L | XL")
 	border := fs.String("border", "", "shadow | white-black | black")
 	corners := fs.String("corners", "", "round | sharp")
 	from := fs.String("from", "", "side the sign sits on: auto | top-left | top | top-right | left | right | bottom-left | bottom | bottom-right")
@@ -101,6 +125,8 @@ targets (exactly one):
 		Style: windowctl.DrawStyle(*style), Shape: windowctl.DrawShape(*shape), Size: windowctl.DrawSize(*size),
 		Border: windowctl.DrawBorder(*border), Corners: windowctl.DrawCorners(*corners), From: windowctl.DrawFrom(*from),
 		Font: *font, FontScale: *fontScale, NoConfig: *noConfig, Animate: windowctl.DrawAnimate(*animate),
+		Position: windowctl.DrawPosition(*position), Margin: *margin, Background: *bg, Align: *align,
+		MaxWidth: *maxWidth, Weight: *weight,
 		Find: *find, FindSource: windowctl.FindSource(*findSource), FindRole: *findRole, FindExact: *findExact, FindNth: *findNth,
 	}
 	if *at != "" {
@@ -110,6 +136,14 @@ targets (exactly one):
 		}
 		opts.Point = &windowctl.Point{X: n[0], Y: n[1]}
 	}
+	if *offset != "" {
+		n, err := parseInts(*offset, 2, "--offset DX,DY")
+		if err != nil {
+			fail(2, err)
+		}
+		opts.Offset = &windowctl.Point{X: n[0], Y: n[1]}
+	}
+	opts.Text = strings.ReplaceAll(opts.Text, `\n`, "\n")
 	if *rect != "" {
 		n, err := parseInts(*rect, 4, "--rect X,Y,W,H")
 		if err != nil {

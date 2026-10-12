@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/muthuishere/windowctl/internal/core"
@@ -47,12 +48,34 @@ type DrawOptions struct {
 	FindExact  bool
 	FindNth    int
 
-	Style   DrawStyle   // arrow (default), ring, box
+	Style   DrawStyle   // arrow (default), ring, box, text
 	Shape   DrawShape   // bend (default), straight, zigzag, spiral
-	Size    DrawSize    // S, M (default), L
+	Size    DrawSize    // S, M (default), L, XL
 	Border  DrawBorder  // shadow (default), white-black, black
 	Corners DrawCorners // round (default), sharp
 	From    DrawFrom    // "" / auto, or top-left, top, right, ...
+
+	// Position: for Style text, where the label sits inside its
+	// container (bottom-center default; see textPositions) or beside an
+	// anchor point; for the other styles an alias of From.
+	Position DrawPosition
+	// Text-style look and placement. Margin is px or "N%" (default the
+	// subtitle safe area: 8% top/bottom, 5% sides); MaxWidth px or "N%"
+	// of the container (default 80%); Background a colour, "none" or
+	// "auto" (default: translucent contrast of Color); Align left /
+	// center / right; Weight regular / bold; FontSize an explicit text
+	// size in units (overrides Size); MaxLines before shrinking (2).
+	Margin     string
+	Offset     *Point
+	Background string
+	Align      string
+	MaxWidth   string
+	Weight     string
+	FontSize   float64
+	MaxLines   int
+	// Subtitle uses the "subtitle" config defaults and sizes the font
+	// from the container height (film-subtitle look).
+	Subtitle bool
 
 	Color       *Color // default red
 	TextColor   *Color // default: readable contrast of Color
@@ -229,6 +252,7 @@ func renderDrawWith(a Adapter, opts DrawOptions) (*image.RGBA, DrawResult, error
 // drawScene is a placed drawing, ready to render in any pose.
 type drawScene struct {
 	opts    DrawOptions // validated, config applied
+	text    *textScene  // set for Style text: a label, no arrow
 	lay     drawLayout
 	st      signText
 	look    drawLook
@@ -240,11 +264,16 @@ type drawScene struct {
 // render paints the finished drawing over the whole surface.
 func (sc *drawScene) render() *image.RGBA {
 	cv := newCanvasIn(sc.surface, sc.px)
+	if sc.text != nil {
+		renderTextPose(cv, sc.text, finalPose)
+		return cv.img
+	}
 	renderLayout(cv, sc.lay, sc.st, sc.look)
 	return cv.img
 }
 
 func planDrawWith(a Adapter, opts DrawOptions) (*drawScene, error) {
+	opts.Style = DrawStyle(strings.ToLower(string(opts.Style)))
 	if !opts.NoConfig {
 		cfg, err := LoadDrawConfig()
 		if err != nil {
@@ -254,11 +283,15 @@ func planDrawWith(a Adapter, opts DrawOptions) (*drawScene, error) {
 			return nil, err
 		}
 	}
+	sizeGiven := opts.Size != ""
 	if err := opts.validate(); err != nil {
 		return nil, err
 	}
 	if opts.Text == "" {
 		return nil, errors.New("draw: --text is required: the sign says what to do")
+	}
+	if opts.Style == DrawText {
+		return planTextScene(a, opts, sizeGiven)
 	}
 	var found *FoundText
 	if opts.Find != "" {

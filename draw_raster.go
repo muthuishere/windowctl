@@ -264,6 +264,7 @@ func parseFontFile(path string) *opentype.Font {
 type signText struct {
 	face     font.Face
 	fallback font.Face      // embedded Go Bold, for runes the sign font lacks
+	symbols  []font.Face    // system symbol fonts, for runes Go Bold lacks too (✓ ✗ ★)
 	font     *opentype.Font // the sign font, for glyph-coverage checks
 	lines    []string
 	widths   []float64
@@ -277,6 +278,10 @@ func layoutText(fnt *opentype.Font, text string, sizePx, maxWPx float64) signTex
 	face, _ := opentype.NewFace(fnt, opts)
 	fb, _ := opentype.NewFace(fallbackFont(), opts)
 	st0 := signText{face: face, fallback: fb, font: fnt}
+	for _, sf := range symbolFonts() {
+		f, _ := opentype.NewFace(sf, opts)
+		st0.symbols = append(st0.symbols, f)
+	}
 	measure := func(s string) float64 {
 		w := 0.0
 		for _, r := range st0.runs(s) {
@@ -332,6 +337,14 @@ func (st signText) runs(s string) []textRun {
 		f := st.face
 		if idx, err := st.font.GlyphIndex(&buf, r); (err != nil || idx == 0) && r != ' ' && st.fallback != nil {
 			f = st.fallback
+			if idx, err := fallbackFont().GlyphIndex(&buf, r); err != nil || idx == 0 {
+				for i, sf := range symbolFonts() {
+					if idx, err := sf.GlyphIndex(&buf, r); err == nil && idx != 0 && i < len(st.symbols) {
+						f = st.symbols[i]
+						break
+					}
+				}
+			}
 		}
 		if n := len(out); n > 0 && out[n-1].face == f {
 			out[n-1].text += string(r)
@@ -346,6 +359,34 @@ var (
 	fallbackOnce sync.Once
 	fallbackFnt  *opentype.Font
 )
+
+var (
+	symbolOnce sync.Once
+	symbolFnts []*opentype.Font
+)
+
+// symbolFonts are the OS's symbol fonts, tried in order per rune.
+func symbolFonts() []*opentype.Font {
+	symbolOnce.Do(func() {
+		var names []string
+		switch runtime.GOOS {
+		case "darwin":
+			names = []string{"ZapfDingbats", "Apple Symbols", "Menlo"}
+		case "windows":
+			names = []string{"seguisym"}
+		default:
+			names = []string{"DejaVuSans"}
+		}
+		for _, n := range names {
+			if p, err := resolveFontPath(n); err == nil {
+				if f := parseFontFile(p); f != nil {
+					symbolFnts = append(symbolFnts, f)
+				}
+			}
+		}
+	})
+	return symbolFnts
+}
 
 func fallbackFont() *opentype.Font {
 	fallbackOnce.Do(func() { fallbackFnt, _ = opentype.Parse(gobold.TTF) })
