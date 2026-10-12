@@ -394,7 +394,12 @@ static int wctl_window_for_id(long id, long* out_pid,
 // CG↔AX title/bounds disagreement that breaks Chrome (and rarely
 // other apps) is impossible to debug from outside the walk. Free
 // when unset; safe to leave in shipping binaries.
-static AXUIElementRef wctl_ax_resolve(pid_t pid, const char* cg_title,
+// _AXUIElementGetWindow is private but stable since 10.5; it maps an AX
+// window straight to its CGWindowID, so when it answers there is no
+// guessing at all.
+extern AXError _AXUIElementGetWindow(AXUIElementRef, CGWindowID*);
+
+static AXUIElementRef wctl_ax_resolve_once(pid_t pid, long cg_id, const char* cg_title,
                                        double cx, double cy,
                                        double cw, double ch) {
     int debug = (getenv("WCTL_AX_DEBUG") != NULL);
@@ -429,11 +434,18 @@ static AXUIElementRef wctl_ax_resolve(pid_t pid, const char* cg_title,
     AXUIElementRef title_hit       = NULL; // first title match
     AXUIElementRef title_geom_hit  = NULL; // title + bounds match
     AXUIElementRef geom_hit        = NULL; // bounds match (no-title fallback)
+    AXUIElementRef id_hit          = NULL; // exact CGWindowID match
 
     CFIndex n = CFArrayGetCount(windows);
     for (CFIndex i = 0; i < n; i++) {
         AXUIElementRef w = (AXUIElementRef)CFArrayGetValueAtIndex(windows, i);
         if (!w) continue;
+
+        CGWindowID wid = 0;
+        if (id_hit == NULL && cg_id > 0 &&
+            _AXUIElementGetWindow(w, &wid) == kAXErrorSuccess && (long)wid == cg_id) {
+            id_hit = w;
+        }
 
         // Title check.
         int title_match = 0;
@@ -498,12 +510,15 @@ static AXUIElementRef wctl_ax_resolve(pid_t pid, const char* cg_title,
     // PID. In that degenerate case the binding is unambiguous.
     AXUIElementRef only_hit = (n == 1) ? (AXUIElementRef)CFArrayGetValueAtIndex(windows, 0) : NULL;
 
-    AXUIElementRef chosen = title_geom_hit;
+    AXUIElementRef chosen = id_hit;
+    if (chosen == NULL) chosen = title_geom_hit;
     if (chosen == NULL) chosen = title_hit;
     if (chosen == NULL) chosen = geom_hit;
     if (chosen == NULL) chosen = only_hit;
     if (chosen != NULL) CFRetain(chosen);
     if (debug) fprintf(stderr, "[ax] chosen=%s\n",
+                       chosen == NULL ? "NONE" :
+                       chosen == id_hit ? "window-id" :
                        chosen == title_geom_hit ? "title+geom" :
                        chosen == title_hit ? "title" :
                        chosen == geom_hit ? "geom" :
@@ -513,6 +528,30 @@ static AXUIElementRef wctl_ax_resolve(pid_t pid, const char* cg_title,
     CFRelease(windows);
     CFRelease(app);
     return chosen;
+}
+
+// wctl_ax_resolve is wctl_ax_resolve_once plus one retry for Chromium
+// and Electron apps, which publish only 0x0 placeholder windows until an
+// assistive client sets AXManualAccessibility on the app. Without this a
+// Chrome window listed fine but `focus` / `key press --title=` failed
+// with "gone from the AX tree".
+static AXUIElementRef wctl_ax_resolve(pid_t pid, long cg_id, const char* cg_title,
+                                       double cx, double cy,
+                                       double cw, double ch) {
+    AXUIElementRef w = wctl_ax_resolve_once(pid, cg_id, cg_title, cx, cy, cw, ch);
+    if (w) return w;
+    AXUIElementRef app = AXUIElementCreateApplication(pid);
+    if (!app) return NULL;
+    // Chrome often reports an error here yet still turns its tree on,
+    // so the result is ignored and the retry decides.
+    AXUIElementSetAttributeValue(app, CFSTR("AXManualAccessibility"), kCFBooleanTrue);
+    AXUIElementSetAttributeValue(app, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
+    CFRelease(app);
+    for (int i = 0; i < 10 && !w; i++) {
+        usleep(100 * 1000);
+        w = wctl_ax_resolve_once(pid, cg_id, cg_title, cx, cy, cw, ch);
+    }
+    return w;
 }
 
 // wctl_ax_set_bounds resolves the AX window for the given CG id and
@@ -527,7 +566,7 @@ static int wctl_ax_set_bounds(long id, double nx, double ny, double nw, double n
     if (got < 0) { if (title) free(title); return WCTL_AX_ERR_INTERNAL; }
     if (got == 0) { if (title) free(title); return WCTL_AX_ERR_NOTFOUND; }
 
-    AXUIElementRef w = wctl_ax_resolve((pid_t)pid, title, cx, cy, cw, ch);
+    AXUIElementRef w = wctl_ax_resolve((pid_t)pid, id, title, cx, cy, cw, ch);
     if (title) free(title);
     if (!w) return WCTL_AX_ERR_NOWINDOW;
 
@@ -590,7 +629,7 @@ static int wctl_ax_focus(long id) {
     if (got < 0) { if (title) free(title); return WCTL_AX_ERR_INTERNAL; }
     if (got == 0) { if (title) free(title); return WCTL_AX_ERR_NOTFOUND; }
 
-    AXUIElementRef w = wctl_ax_resolve((pid_t)pid, title, cx, cy, cw, ch);
+    AXUIElementRef w = wctl_ax_resolve((pid_t)pid, id, title, cx, cy, cw, ch);
     if (title) free(title);
     if (!w) return WCTL_AX_ERR_NOWINDOW;
 
@@ -718,7 +757,7 @@ static int wctl_ax_texts(long id, wctl_text_t** out) {
     int got = wctl_window_for_id(id, &pid, &cx, &cy, &cw, &ch, &title);
     if (got < 0) { if (title) free(title); return WCTL_AX_ERR_INTERNAL; }
     if (got == 0) { if (title) free(title); return WCTL_AX_ERR_NOTFOUND; }
-    AXUIElementRef w = wctl_ax_resolve((pid_t)pid, title, cx, cy, cw, ch);
+    AXUIElementRef w = wctl_ax_resolve((pid_t)pid, id, title, cx, cy, cw, ch);
     if (title) free(title);
     if (!w) return WCTL_AX_ERR_NOWINDOW;
     AXUIElementSetMessagingTimeout(w, 1.0);
@@ -748,6 +787,8 @@ import "C"
 
 import (
 	"fmt"
+	"os/exec"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -979,7 +1020,52 @@ func (a *Adapter) Focus(id string) error {
 		return err
 	}
 	rc := int(C.wctl_ax_focus(C.long(cgID)))
+	if rc == -3 && a.focusScriptable(id) {
+		return nil
+	}
 	return translateAXReturn(rc, id, "focus")
+}
+
+// scriptableBrowsers publish 0x0 placeholder AX windows (Chrome and its
+// relatives) yet answer AppleScript, which can raise a window by title.
+var scriptableBrowsers = map[string]bool{
+	"Google Chrome": true, "Google Chrome Canary": true, "Chromium": true,
+	"Brave Browser": true, "Microsoft Edge": true, "Arc": true, "Vivaldi": true,
+}
+
+// focusScriptable is the fallback when AX cannot see the window: it asks
+// the browser itself to bring the window with that exact title to the
+// front. The caller still verifies focus before sending any input.
+func (a *Adapter) focusScriptable(id string) bool {
+	ws, err := a.ListWindows()
+	if err != nil {
+		return false
+	}
+	for _, w := range ws {
+		if w.ID != id || !scriptableBrowsers[w.App] || w.Title == "" {
+			continue
+		}
+		script := `on run argv
+tell application (item 1 of argv)
+	repeat with w in windows
+		if name of w is (item 2 of argv) then
+			set index of w to 1
+			activate
+			return "ok"
+		end if
+	end repeat
+end tell
+return "none"
+end run`
+		out, err := exec.Command("/usr/bin/osascript", "-e", script, w.App, w.Title).Output()
+		if err != nil || strings.TrimSpace(string(out)) != "ok" {
+			return false
+		}
+		// AppleScript's activate is ignored when the caller is a
+		// background process; LaunchServices is not.
+		return exec.Command("/usr/bin/open", "-a", w.App).Run() == nil
+	}
+	return false
 }
 
 // RequestAccessibility triggers the macOS AX trust check WITH prompt
