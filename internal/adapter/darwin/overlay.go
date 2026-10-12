@@ -46,8 +46,10 @@ static int wctl_is_main_thread(void) { return pthread_main_np(); }
 // Shows a transparent, click-through, never-key panel over the global
 // top-left rect (x,y,w,h in points) holding the premultiplied RGBA
 // image. Returns the panel (retained) or NULL.
+static void wctl_overlay_set_image(void *p, const unsigned char *rgba, int pw, int ph, double w);
+
 static void *wctl_overlay_show(double x, double y, double w, double h,
-                               const unsigned char *rgba, int pw, int ph) {
+                               const unsigned char *rgba, int pw, int ph, double alpha) {
     void *pool = objc_autoreleasePoolPush();
     objid app = MSG(objid)(C("NSApplication"), S("sharedApplication"));
     // Accessory: no Dock icon, no menu bar, never steals activation, and
@@ -77,6 +79,19 @@ static void *wctl_overlay_show(double x, double y, double w, double h,
     // Keep the image exactly where the frame says, even across displays.
     MSG(void, CGRect, signed char)(panel, S("setFrame:display:"), frame, (signed char)0);
 
+    MSG(void, double)(panel, S("setAlphaValue:"), alpha);
+    wctl_overlay_set_image(panel, rgba, pw, ph, w);
+
+    MSG(void)(panel, S("orderFrontRegardless"));
+    objc_autoreleasePoolPop(pool);
+    return panel;
+}
+
+// Replaces the panel's picture (w = its width in points). A view's
+// backing layer has no implicit animations, so the swap is instant.
+static void wctl_overlay_set_image(void *p, const unsigned char *rgba, int pw, int ph, double w) {
+    void *pool = objc_autoreleasePoolPush();
+    objid panel = (objid)p;
     CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     CFDataRef data = CFDataCreate(NULL, rgba, (CFIndex)pw * ph * 4);
     CGDataProviderRef dp = CGDataProviderCreateWithCFData(data);
@@ -89,13 +104,30 @@ static void *wctl_overlay_show(double x, double y, double w, double h,
     objid view = MSG(objid)(panel, S("contentView"));
     MSG(void, signed char)(view, S("setWantsLayer:"), 1);
     objid layer = MSG(objid)(view, S("layer"));
+    objid tx = C("CATransaction");
+    MSG(void)(tx, S("begin"));
+    MSG(void, signed char)(tx, S("setDisableActions:"), 1);
     MSG(void, objid)(layer, S("setContents:"), (objid)img);
     MSG(void, double)(layer, S("setContentsScale:"), w > 0 ? (double)pw / w : 1.0);
+    MSG(void)(tx, S("commit"));
     CGImageRelease(img);
 
-    MSG(void)(panel, S("orderFrontRegardless"));
     objc_autoreleasePoolPop(pool);
-    return panel;
+}
+
+static void wctl_overlay_set_alpha(void *p, double alpha) {
+    void *pool = objc_autoreleasePoolPush();
+    MSG(void, double)((objid)p, S("setAlphaValue:"), alpha);
+    objc_autoreleasePoolPop(pool);
+}
+
+// System Settings > Accessibility > Display > Reduce motion.
+static int wctl_reduce_motion(void) {
+    void *pool = objc_autoreleasePoolPush();
+    objid ws = MSG(objid)(C("NSWorkspace"), S("sharedWorkspace"));
+    int r = MSG(signed char)(ws, S("accessibilityDisplayShouldReduceMotion")) ? 1 : 0;
+    objc_autoreleasePoolPop(pool);
+    return r;
 }
 
 // Pumps the AppKit event loop for up to `seconds`.
@@ -127,6 +159,7 @@ import (
 	"errors"
 	"image"
 	"runtime"
+	"time"
 	"unsafe"
 
 	"github.com/muthuishere/windowctl/internal/core"
@@ -150,7 +183,7 @@ func (a *Adapter) ShowOverlay(b core.Rect, img *image.RGBA, done func() bool) er
 		return errors.New("draw: empty overlay image")
 	}
 	panel := C.wctl_overlay_show(C.double(b.X), C.double(b.Y), C.double(b.W), C.double(b.H),
-		(*C.uchar)(unsafe.Pointer(&img.Pix[0])), C.int(w), C.int(h))
+		(*C.uchar)(unsafe.Pointer(&img.Pix[0])), C.int(w), C.int(h), 1)
 	if panel == nil {
 		return errors.New("draw: could not create the overlay window")
 	}
@@ -160,3 +193,61 @@ func (a *Adapter) ShowOverlay(b core.Rect, img *image.RGBA, done func() bool) er
 	}
 	return nil
 }
+
+// ---- animated overlays (core.OverlayAnimator) ----
+
+var _ core.OverlayAnimator = (*Adapter)(nil)
+
+type overlay struct {
+	panel unsafe.Pointer
+	w, h  int
+	b     core.Rect
+}
+
+func (a *Adapter) OpenOverlay(b core.Rect, img *image.RGBA, opacity float64) (core.Overlay, error) {
+	if C.wctl_is_main_thread() == 0 {
+		return nil, errors.New("draw: on macOS the overlay must be shown from the main goroutine (AppKit owns the main thread)")
+	}
+	w, h := img.Rect.Dx(), img.Rect.Dy()
+	if w == 0 || h == 0 {
+		return nil, errors.New("draw: empty overlay image")
+	}
+	panel := C.wctl_overlay_show(C.double(b.X), C.double(b.Y), C.double(b.W), C.double(b.H),
+		(*C.uchar)(unsafe.Pointer(&img.Pix[0])), C.int(w), C.int(h), C.double(opacity))
+	if panel == nil {
+		return nil, errors.New("draw: could not create the overlay window")
+	}
+	return &overlay{panel: panel, w: w, h: h, b: b}, nil
+}
+
+func (o *overlay) SetImage(img *image.RGBA) error {
+	if img.Rect.Dx() != o.w || img.Rect.Dy() != o.h || img.Stride != o.w*4 {
+		return errors.New("draw: overlay frame size changed")
+	}
+	C.wctl_overlay_set_image(o.panel, (*C.uchar)(unsafe.Pointer(&img.Pix[0])), C.int(o.w), C.int(o.h), C.double(o.b.W))
+	return nil
+}
+
+func (o *overlay) SetOpacity(v float64) { C.wctl_overlay_set_alpha(o.panel, C.double(v)) }
+
+func (o *overlay) Close() {
+	if o.panel != nil {
+		C.wctl_overlay_close(o.panel)
+		o.panel = nil
+	}
+}
+
+// PumpOverlays runs the event loop until d has passed (an event can end
+// one wait early, so keep waiting until the deadline).
+func (a *Adapter) PumpOverlays(d time.Duration) {
+	end := time.Now().Add(d)
+	for {
+		left := time.Until(end)
+		if left <= 0 {
+			return
+		}
+		C.wctl_overlay_pump(C.double(left.Seconds()))
+	}
+}
+
+func (a *Adapter) ReduceMotion() bool { return C.wctl_reduce_motion() != 0 }

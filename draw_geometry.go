@@ -506,6 +506,10 @@ type drawLayout struct {
 	arrow   arrowGeom
 	metrics drawMetrics
 	uiScale float64
+	// anchor is the target point (a rect's centre); pointTarget says the
+	// target was a point.
+	anchor      vec
+	pointTarget bool
 }
 
 // planLayout places the sign and builds the arrow. target is a point
@@ -574,7 +578,7 @@ func planLayout(target frect, isPoint bool, area, bounds frect, signW, signH flo
 		tip = best[0].add(best[1].mul(gap))
 	}
 	return drawLayout{
-		mark: mk, sign: sign, radius: radius, from: from, metrics: m, uiScale: ui,
+		mark: mk, sign: sign, radius: radius, from: from, metrics: m, uiScale: ui, anchor: anchor, pointTarget: isPoint,
 		arrow: buildArrow(tip, sign, radius, bounds, m, o.Shape),
 	}
 }

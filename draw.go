@@ -8,6 +8,8 @@ import (
 	"math"
 	"os"
 	"time"
+
+	"github.com/muthuishere/windowctl/internal/core"
 )
 
 // Point is a global (virtual-desktop) coordinate, or monitor-relative
@@ -64,6 +66,11 @@ type DrawOptions struct {
 	FontScale float64
 	// NoConfig skips ~/.config/windowctl/fontconfig.json.
 	NoConfig bool
+	// Animate: on (default) draws the drawing in (stroke reveal, sign
+	// fade-in), pulses softly at the target while shown and fades out;
+	// off shows and removes it at once. The OS reduce-motion setting
+	// keeps only plain fades.
+	Animate DrawAnimate
 
 	// Duration bounds how long Draw shows the drawing; 0 means until
 	// Stop fires (or forever when Stop is nil too).
@@ -120,10 +127,11 @@ func RenderDraw(opts DrawOptions, outPath string) (DrawResult, error) {
 }
 
 func drawWith(a Adapter, opts DrawOptions) (DrawResult, error) {
-	img, res, err := renderDrawWith(a, opts)
+	sc, err := planDrawWith(a, opts)
 	if err != nil {
-		return res, err
+		return DrawResult{}, err
 	}
+	img, res := sc.render(), sc.res
 	var deadline time.Time
 	if opts.Duration > 0 {
 		deadline = nowFn().Add(opts.Duration)
@@ -137,6 +145,9 @@ func drawWith(a Adapter, opts DrawOptions) (DrawResult, error) {
 			}
 		}
 		return !deadline.IsZero() && !nowFn().Before(deadline)
+	}
+	if anim, ok := a.(core.OverlayAnimator); ok && sc.opts.Animate != AnimateOff {
+		return res, animateDraw(anim, sc, img, done)
 	}
 	return res, a.ShowOverlay(res.Surface, img, done)
 }
@@ -208,35 +219,61 @@ func resolveDrawTarget(a Adapter, o DrawOptions) (frect, bool, Monitor, error) {
 }
 
 func renderDrawWith(a Adapter, opts DrawOptions) (*image.RGBA, DrawResult, error) {
+	sc, err := planDrawWith(a, opts)
+	if err != nil {
+		return nil, DrawResult{}, err
+	}
+	return sc.render(), sc.res, nil
+}
+
+// drawScene is a placed drawing, ready to render in any pose.
+type drawScene struct {
+	opts    DrawOptions // validated, config applied
+	lay     drawLayout
+	st      signText
+	look    drawLook
+	px      float64
+	surface image.Rectangle // the whole monitor, in image pixels
+	res     DrawResult
+}
+
+// render paints the finished drawing over the whole surface.
+func (sc *drawScene) render() *image.RGBA {
+	cv := newCanvasIn(sc.surface, sc.px)
+	renderLayout(cv, sc.lay, sc.st, sc.look)
+	return cv.img
+}
+
+func planDrawWith(a Adapter, opts DrawOptions) (*drawScene, error) {
 	if !opts.NoConfig {
 		cfg, err := LoadDrawConfig()
 		if err != nil {
-			return nil, DrawResult{}, err
+			return nil, err
 		}
 		if err := opts.applyConfig(cfg); err != nil {
-			return nil, DrawResult{}, err
+			return nil, err
 		}
 	}
 	if err := opts.validate(); err != nil {
-		return nil, DrawResult{}, err
+		return nil, err
 	}
 	if opts.Text == "" {
-		return nil, DrawResult{}, errors.New("draw: --text is required: the sign says what to do")
+		return nil, errors.New("draw: --text is required: the sign says what to do")
 	}
 	var found *FoundText
 	if opts.Find != "" {
 		if opts.Match == nil {
-			return nil, DrawResult{}, errors.New("draw: --find needs the window to search: add --title or --app")
+			return nil, errors.New("draw: --find needs the window to search: add --title or --app")
 		}
 		hits, err := findTextWith(a, FindOptions{
 			Match: *opts.Match, Text: opts.Find, Source: opts.FindSource, Role: opts.FindRole, Exact: opts.FindExact,
 		})
 		if err != nil {
-			return nil, DrawResult{}, err
+			return nil, err
 		}
 		i := max(opts.FindNth, 1) - 1
 		if i >= len(hits) {
-			return nil, DrawResult{}, fmt.Errorf("draw: --nth %d but only %d match(es) for %q", opts.FindNth, len(hits), opts.Find)
+			return nil, fmt.Errorf("draw: --nth %d but only %d match(es) for %q", opts.FindNth, len(hits), opts.Find)
 		}
 		found = &hits[i]
 		r := found.Bounds
@@ -244,7 +281,7 @@ func renderDrawWith(a Adapter, opts DrawOptions) (*image.RGBA, DrawResult, error
 	}
 	target, isPoint, mon, err := resolveDrawTarget(a, opts)
 	if err != nil {
-		return nil, DrawResult{}, err
+		return nil, err
 	}
 	surface := Rect{X: mon.X, Y: mon.Y, W: mon.Width, H: mon.Height}
 	ui, px := a.OverlayScale(surface)
@@ -259,7 +296,7 @@ func renderDrawWith(a Adapter, opts DrawOptions) (*image.RGBA, DrawResult, error
 	bounds := frect{0, 0, float64(mon.Width), float64(mon.Height)}
 	face, err := loadSignFont(opts.Font)
 	if err != nil {
-		return nil, DrawResult{}, err
+		return nil, err
 	}
 	m := opts.Size.metrics().scaled(ui)
 	if opts.FontScale > 0 {
@@ -274,8 +311,6 @@ func renderDrawWith(a Adapter, opts DrawOptions) (*image.RGBA, DrawResult, error
 		others = append(others, frect{float64(r.X - mon.X), float64(r.Y - mon.Y), float64(r.W), float64(r.H)})
 	}
 	lay := planLayout(local, isPoint, bounds, bounds, signW, signH, opts, ui, others)
-	cv := newCanvas(int(math.Ceil(bounds.W*px)), int(math.Ceil(bounds.H*px)), px)
-	renderLayout(cv, lay, st, lookOf(opts))
 	res := DrawResult{
 		Monitor: mon.ID,
 		Sign: Rect{X: mon.X + int(math.Round(lay.sign.X)), Y: mon.Y + int(math.Round(lay.sign.Y)),
@@ -286,5 +321,8 @@ func renderDrawWith(a Adapter, opts DrawOptions) (*image.RGBA, DrawResult, error
 		PixelScale: px,
 		Found:      found,
 	}
-	return cv.img, res, nil
+	return &drawScene{
+		opts: opts, lay: lay, st: st, look: lookOf(opts), px: px, res: res,
+		surface: image.Rect(0, 0, int(math.Ceil(bounds.W*px)), int(math.Ceil(bounds.H*px))),
+	}, nil
 }

@@ -45,7 +45,13 @@ type canvas struct {
 }
 
 func newCanvas(wPx, hPx int, px float64) *canvas {
-	return &canvas{img: image.NewRGBA(image.Rect(0, 0, wPx, hPx)), px: px}
+	return newCanvasIn(image.Rect(0, 0, wPx, hPx), px)
+}
+
+// newCanvasIn paints only the pixels inside r (surface pixel
+// coordinates), for animation frames cropped to the drawing.
+func newCanvasIn(r image.Rectangle, px float64) *canvas {
+	return &canvas{img: image.NewRGBA(r), px: px}
 }
 
 func rgba(c Color) color.RGBA {
@@ -142,6 +148,9 @@ func (cv *canvas) stroke(pts []vec, width float64, c Color) {
 // fillOutlined fills a polygon and strokes its outline with width w, so
 // the shape grows by w/2 on every side (a border under the coloured fill).
 func (cv *canvas) fillOutlined(pts []vec, w float64, c Color) {
+	if len(pts) < 3 {
+		return
+	}
 	cv.fill(pts, c)
 	if w > 0 {
 		cv.stroke(append(pts, pts[0]), w, c)
@@ -416,10 +425,16 @@ func (l drawLook) borders(ui float64) []struct {
 
 // renderLayout paints one drawing onto cv.
 func renderLayout(cv *canvas, lay drawLayout, st signText, look drawLook) {
+	renderLayoutPose(cv, lay, st, look, finalPose)
+}
+
+// renderLayoutPose paints one drawing in an animation pose; finalPose
+// paints exactly what renderLayout always did.
+func renderLayoutPose(cv *canvas, lay drawLayout, st signText, look drawLook, pose drawPose) {
 	ui := lay.uiScale
-	art := newCanvas(cv.img.Rect.Dx(), cv.img.Rect.Dy(), cv.px)
+	art := newCanvasIn(cv.img.Rect, cv.px)
 	borders := look.borders(ui)
-	a := lay.arrow
+	a := pose.arrow(lay.arrow)
 	stroke := lay.metrics.stroke
 
 	// The target mark: border(s) then the coloured line. Outline only.
@@ -430,7 +445,8 @@ func renderLayout(cv *canvas, lay drawLayout, st signText, look drawLook) {
 	case markRing:
 		markPath = ellipse(lay.mark.center, lay.mark.rx, lay.mark.ry)
 	}
-	if markPath != nil {
+	markPath = pose.markPath(markPath, lay.mark)
+	if len(markPath) > 0 {
 		for _, b := range borders {
 			art.stroke(markPath, drawMarkLineWidth*ui+b.w, b.c)
 		}
@@ -448,9 +464,16 @@ func renderLayout(cv *canvas, lay drawLayout, st signText, look drawLook) {
 	for _, b := range borders[:len(borders)-1] {
 		part(b)
 	}
-	pill := roundRect(lay.sign, lay.radius)
+	// The sign goes on its own layer while it fades / slides in.
+	sg, signDY := art, 0.0
+	if !pose.signSettled() {
+		sg, signDY = newCanvasIn(cv.img.Rect, cv.px), pose.signDY
+	}
+	sign := lay.sign
+	sign.Y += signDY
+	pill := roundRect(sign, lay.radius)
 	if look.style != BorderShadow {
-		art.fill(pill, look.edge)
+		sg.fill(pill, look.edge)
 	}
 	part(borders[len(borders)-1])
 	// Sign body: fill + contrast border fully inside its rect.
@@ -458,24 +481,33 @@ func renderLayout(cv *canvas, lay drawLayout, st signText, look drawLook) {
 	if look.style != BorderShadow {
 		inset = signEdgeLine*ui - 0.5*ui
 	}
-	body := lay.sign.inset(inset, inset)
+	body := sign.inset(inset, inset)
 	rad := math.Max(0, lay.radius-inset)
 	if look.style == BorderBlack {
-		art.fill(roundRect(body, rad), look.color)
+		sg.fill(roundRect(body, rad), look.color)
 	} else {
-		art.fill(roundRect(body, rad), look.border)
+		sg.fill(roundRect(body, rad), look.border)
 		in := body.inset(signOutline*ui, signOutline*ui)
-		art.fill(roundRect(in, math.Max(0, rad-signOutline*ui)), look.color)
+		sg.fill(roundRect(in, math.Max(0, rad-signOutline*ui)), look.color)
 	}
-	art.stroke(a.shaft, stroke, look.color)
+	if sg != art {
+		sg.text(st, sign, look.text)
+		draw.DrawMask(art.img, art.img.Rect, sg.img, sg.img.Rect.Min,
+			image.NewUniform(color.Alpha{uint8(math.Round(clamp01(pose.signAlpha) * 255))}), image.Point{}, draw.Over)
+	}
+	if len(a.shaft) > 0 {
+		art.stroke(a.shaft, stroke, look.color)
+	}
 	art.fill(a.root, look.color)
 	art.fill(a.head, look.color)
-	art.text(st, lay.sign, look.text)
+	if sg == art {
+		art.text(st, sign, look.text)
+	}
 
 	if look.style == BorderShadow {
 		shadow(cv, art, ui)
 	}
-	draw.Draw(cv.img, cv.img.Rect, art.img, image.Point{}, draw.Over)
+	draw.Draw(cv.img, cv.img.Rect, art.img, cv.img.Rect.Min, draw.Over)
 }
 
 // shadow paints a soft drop shadow of art's alpha onto cv: a 3-pass box

@@ -36,6 +36,29 @@ type DrawConfig struct {
 	Border  string `json:"border,omitempty"`  // shadow, white-black, black
 	Corners string `json:"corners,omitempty"` // round, sharp
 	From    string `json:"from,omitempty"`    // auto, top-left, ...
+	// Animate is "on" / "off" (or true / false): the entrance, pulse and
+	// fade-out of a shown drawing.
+	Animate AnimateSetting `json:"animate,omitempty"`
+}
+
+// AnimateSetting reads "on" / "off" or a JSON boolean.
+type AnimateSetting string
+
+func (a *AnimateSetting) UnmarshalJSON(b []byte) error {
+	var v bool
+	if json.Unmarshal(b, &v) == nil {
+		*a = "off"
+		if v {
+			*a = "on"
+		}
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("animate must be \"on\", \"off\", true or false")
+	}
+	*a = AnimateSetting(s)
+	return nil
 }
 
 // DefaultDrawConfig is what `windowctl draw config --init` writes.
@@ -46,7 +69,7 @@ func DefaultDrawConfig() DrawConfig {
 	}
 	return DrawConfig{
 		Font: font, FontScale: 1, Color: "red", Size: "M", Style: "arrow",
-		Shape: "bend", Border: "shadow", Corners: "round", From: "auto",
+		Shape: "bend", Border: "shadow", Corners: "round", From: "auto", Animate: "on",
 	}
 }
 
@@ -114,6 +137,7 @@ func (o *DrawOptions) applyConfig(c DrawConfig) error {
 	fill((*string)(&o.Border), c.Border)
 	fill((*string)(&o.Corners), c.Corners)
 	fill((*string)(&o.From), c.From)
+	fill((*string)(&o.Animate), string(c.Animate))
 	for _, f := range []struct {
 		dst  **Color
 		v    string

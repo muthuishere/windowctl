@@ -38,6 +38,19 @@ func drawEntryPath(pid int) string {
 	return filepath.Join(drawRegistryDir(), strconv.Itoa(pid)+".json")
 }
 
+// drawStopPath is the marker `draw stop` writes on Windows to ask a
+// drawing to fade out and exit (there is no SIGTERM there).
+func drawStopPath(pid int) string {
+	return filepath.Join(drawRegistryDir(), strconv.Itoa(pid)+".stop")
+}
+
+// DrawStopRequested reports whether `draw stop` asked this process (a
+// detached drawing) to end; the child polls it to fade out cleanly.
+func DrawStopRequested() bool {
+	_, err := os.Stat(drawStopPath(os.Getpid()))
+	return err == nil
+}
+
 // IsDrawChild reports whether this process is a detached drawing.
 func IsDrawChild() bool { return os.Getenv(DrawChildEnv) == "1" }
 

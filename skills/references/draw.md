@@ -16,6 +16,8 @@ windowctl draw --at 400,300 --monitor 2 --text "..."              # relative to 
 windowctl draw --at X,Y --text "..." --detach --json              # returns at once (300 s)
 windowctl draw stop                                               # remove every detached drawing
 windowctl draw --at X,Y --text "..." --preview out.png --json     # render only, show nothing
+windowctl draw --at X,Y --text "..." --preview-gif out.gif        # render the entrance animation (docs)
+windowctl draw ... --animate off                                   # no draw-in / pulse / fade (config key "animate")
 ```
 
 Point at a control by its text — no coordinates needed:

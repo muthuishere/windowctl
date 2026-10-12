@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -37,7 +38,7 @@ func drawCmd(args []string) {
 	}
 	fs := flag.NewFlagSet("draw", flag.ExitOnError)
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `usage: windowctl draw <target> --text "..." [look] [--duration S] [--detach] [--preview out.png] [--json]
+		fmt.Fprint(os.Stderr, `usage: windowctl draw <target> --text "..." [look] [--duration S] [--detach] [--animate on|off] [--preview out.png] [--preview-gif out.gif] [--json]
        windowctl draw stop            remove every detached drawing
        windowctl draw config [--init] show / create ~/.config/windowctl/fontconfig.json
        windowctl draw fonts           list font names usable with --font
@@ -78,7 +79,9 @@ targets (exactly one):
 	noConfig := fs.Bool("no-config", false, "ignore ~/.config/windowctl/fontconfig.json")
 	duration := fs.Float64("duration", -1, "seconds to show (default 8, or 300 with --detach; 0 = until 'draw stop')")
 	detach := fs.Bool("detach", false, "return at once; the drawing stays until --duration or 'windowctl draw stop'")
+	animate := fs.String("animate", "", "on | off: draw-in entrance, soft pulse at the target, fade-out (default on; OS reduce-motion keeps plain fades)")
 	preview := fs.String("preview", "", "render to this PNG instead of showing (same pixels, nothing on screen)")
+	previewGIF := fs.String("preview-gif", "", "render the entrance animation to this GIF instead of showing (nothing on screen)")
 	asJSON := fs.Bool("json", false, "print where the drawing landed as JSON")
 	_ = fs.Parse(args)
 
@@ -97,7 +100,7 @@ targets (exactly one):
 		Text: *text, Mouse: *mouse,
 		Style: windowctl.DrawStyle(*style), Shape: windowctl.DrawShape(*shape), Size: windowctl.DrawSize(*size),
 		Border: windowctl.DrawBorder(*border), Corners: windowctl.DrawCorners(*corners), From: windowctl.DrawFrom(*from),
-		Font: *font, FontScale: *fontScale, NoConfig: *noConfig,
+		Font: *font, FontScale: *fontScale, NoConfig: *noConfig, Animate: windowctl.DrawAnimate(*animate),
 		Find: *find, FindSource: windowctl.FindSource(*findSource), FindRole: *findRole, FindExact: *findExact, FindNth: *findNth,
 	}
 	if *at != "" {
@@ -194,6 +197,18 @@ targets (exactly one):
 		return
 	}
 
+	if *previewGIF != "" {
+		res, err := windowctl.RenderDrawGIF(opts, *previewGIF)
+		if err != nil {
+			fail(1, err)
+		}
+		emit(res)
+		if !*asJSON {
+			fmt.Println(*previewGIF)
+		}
+		return
+	}
+
 	if *detach {
 		res, err := windowctl.SpawnDetachedDraw(append([]string{"draw"}, withoutDetach(args)...))
 		if err != nil {
@@ -208,9 +223,19 @@ targets (exactly one):
 	stop := make(chan struct{})
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	go func() { <-sig; close(stop) }()
+	var stopOnce sync.Once
+	go func() { <-sig; stopOnce.Do(func() { close(stop) }) }()
 	opts.Stop = stop
 	child := windowctl.IsDrawChild()
+	if child {
+		// `draw stop` on Windows asks via a marker file (no SIGTERM there).
+		go func() {
+			for !windowctl.DrawStopRequested() {
+				time.Sleep(100 * time.Millisecond)
+			}
+			stopOnce.Do(func() { close(stop) })
+		}()
+	}
 	if child || *asJSON {
 		// Place first so the registry / JSON say where it is before it shows.
 		res, err := windowctl.RenderDraw(opts, os.DevNull)

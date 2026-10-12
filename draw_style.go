@@ -45,6 +45,13 @@ const (
 // DrawBorder is how arrow and sign stand off the screen behind them:
 // contrast border + drop shadow (default), contrast border + thin black
 // edge, or only a thin black outline.
+type DrawAnimate string
+
+const (
+	AnimateOn  DrawAnimate = "on"
+	AnimateOff DrawAnimate = "off"
+)
+
 type DrawBorder string
 
 const (
@@ -227,6 +234,10 @@ func (o *DrawOptions) validate() error {
 		return err
 	}
 	o.Corners = DrawCorners(s)
+	if s, err = pick("animate", string(o.Animate), "on", "on", "off"); err != nil {
+		return err
+	}
+	o.Animate = DrawAnimate(s)
 	if o.From == "auto" {
 		o.From = ""
 	}

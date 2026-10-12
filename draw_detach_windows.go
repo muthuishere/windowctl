@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -29,11 +30,22 @@ func processAlive(pid int) bool {
 	return windows.GetExitCodeProcess(h, &code) == nil && code == 259 // STILL_ACTIVE
 }
 
-// stopProcess ends the drawing; Windows destroys its window with it.
+// stopProcess asks the drawing to fade out and close (a stop marker it
+// polls; Windows has no SIGTERM), then kills it if it is still there.
+// Windows destroys its windows with the process either way.
 func stopProcess(pid int) error {
 	p, err := os.FindProcess(pid)
 	if err != nil {
 		return err
+	}
+	marker := drawStopPath(pid)
+	if os.WriteFile(marker, nil, 0o644) == nil {
+		defer os.Remove(marker)
+		for end := time.Now().Add(800 * time.Millisecond); time.Now().Before(end); time.Sleep(25 * time.Millisecond) {
+			if !processAlive(pid) {
+				return nil
+			}
+		}
 	}
 	return p.Kill()
 }
