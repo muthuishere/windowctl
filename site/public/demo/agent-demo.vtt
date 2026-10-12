@@ -1,25 +1,43 @@
 WEBVTT
 
-00:00:00.300 --> 00:00:02.000
-Just ask your agent.
+00:00:00.550 --> 00:00:07.630
+Your AI agent writes code all day — but ask it to tidy your windows, and it's stuck.
 
-00:00:03.700 --> 00:00:07.258
-Ask in plain English. Claude picks up the windowctl skill.
+00:00:08.980 --> 00:00:13.093
+So let's give it eyes. And hands.
 
-00:00:17.100 --> 00:00:19.683
-TextEdit and Calculator, tiled on the right.
+00:00:13.843 --> 00:00:20.193
+I'll just say it the way I'd tell a friend: TextEdit top right, Calculator bottom right.
+you: put TextEdit in the top-right quarter and Calculator in the bottom-right quarter of my main monitor
 
-00:00:22.700 --> 00:00:25.004
-Point at the seven, with a green arrow.
+00:00:26.293 --> 00:00:32.848
+It picks up the windowctl skill on its own... and there it is. Done.
+you: put TextEdit in the top-right quarter and Calculator in the bottom-right quarter of my main monitor
 
-00:00:31.300 --> 00:00:33.836
-Find the Format menu, and circle it.
+00:00:33.598 --> 00:00:41.958
+Now, point at the seven, with a green arrow... and there it is, right on the button.
+you: point at the 7 button on Calculator with a green arrow saying press 7, and keep it on screen
 
-00:00:44.800 --> 00:00:48.126
-Found through accessibility, not guessed pixels.
+00:00:42.708 --> 00:00:48.461
+Here's the one that gets me. Find the Format menu, and circle it.
+you: find the Format menu in TextEdit and circle it, keep it on screen
 
-00:00:50.900 --> 00:00:52.786
-And clean up when you're done.
+00:00:51.658 --> 00:00:57.988
+It doesn't guess at pixels — it asks the app where that menu actually lives.
+you: find the Format menu in TextEdit and circle it, keep it on screen
 
-00:01:03.400 --> 00:01:06.633
-windowctl. Install it, then just ask.
+00:00:59.158 --> 00:01:03.721
+And when we're finished? Clean up the arrows. Gone.
+you: clean up the arrows
+
+00:01:11.508 --> 00:01:19.401
+And it works from a script, or CI, too. One line — no chat window at all.
+$ claude -p "put TextEdit on the left half and point at its Format menu" --dangerously-skip-permissions
+
+00:01:21.458 --> 00:01:25.335
+...and the desktop just follows along.
+$ claude -p "put TextEdit on the left half and point at its Format menu" --dangerously-skip-permissions
+
+00:01:28.708 --> 00:01:35.162
+One binary. Every screen. Go make your desktop work for you.
+npm install -g @muthuishere/windowctl

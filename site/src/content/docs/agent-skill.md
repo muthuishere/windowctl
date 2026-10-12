@@ -6,7 +6,7 @@ description: Drive windowctl in plain English — the skill ships inside the bin
 <video class="wc-demo" src="/windowctl/demo/agent-demo.mp4" poster="/windowctl/demo/agent-poster.jpg" controls playsinline preload="metadata">
 	<track kind="captions" src="/windowctl/demo/agent-demo.vtt" srclang="en" label="English" default />
 </video>
-<p class="wc-caption">A real Claude Code session using the bundled windowctl skill: four plain-English requests, recorded live on macOS (67 seconds, voiceover and captions).</p>
+<p class="wc-caption">A real Claude Code session using the bundled windowctl skill: four plain-English requests, then the same thing headless from one <code>claude -p</code> line — recorded live on macOS (95 seconds, narration and captions with each prompt).</p>
 
 **You do not have to install it.** Every `windowctl` command (except
 `install`, `uninstall` and `help`) makes sure the bundled skill is present and

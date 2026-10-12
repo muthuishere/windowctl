@@ -1,82 +1,118 @@
 WEBVTT
 
-00:00:00.100 --> 00:00:03.500
-windowctl. Windows, monitors, automation, draw.
+00:00:00.550 --> 00:00:08.214
+You know the feeling. Too many windows, too many screens... and a morning lost to dragging.
 
-00:00:03.800 --> 00:00:06.197
-List every open window as a table.
+00:00:09.564 --> 00:00:15.909
+And your AI agent? It can't even see your screen — let alone show you where to click.
 
-00:00:06.900 --> 00:00:09.436
-List monitors, with active and focused.
+00:00:17.259 --> 00:00:21.342
+So... what if it could just — do it?
 
-00:00:10.000 --> 00:00:12.350
-Snap TextEdit to the left half.
+00:00:22.692 --> 00:00:28.682
+Meet windowctl. One tiny binary for your whole desktop.
+npm install -g @muthuishere/windowctl
 
-00:00:13.100 --> 00:00:15.590
-Quarters: Finder to the bottom right.
+00:00:29.432 --> 00:00:35.197
+First — what's open? Every window, every app, one command.
+$ windowctl windows list --app Finder
 
-00:00:16.200 --> 00:00:18.783
-Any split: TextEdit takes one third.
+00:00:35.947 --> 00:00:40.215
+Your displays, too — even the one you're looking at.
+$ windowctl monitors list
 
-00:00:19.300 --> 00:00:21.650
-Or place it at exact coordinates.
+00:00:40.965 --> 00:00:46.423
+Now: TextEdit left, Finder right. No dragging.
+$ windowctl move --app TextEdit --monitor 1 --zone 1A
 
-00:00:22.400 --> 00:00:24.425
-Resize a window in place.
+00:00:47.173 --> 00:00:51.677
+Quarters? It just... fits.
+$ windowctl move --app Finder --monitor 1 --zone 2D
 
-00:00:25.500 --> 00:00:27.990
-Launch Calculator, then wait for it.
+00:00:52.427 --> 00:00:56.183
+Thirds, any split — you name the shape.
+$ windowctl move --app TextEdit --monitor 1 --zone 3:1
 
-00:00:28.600 --> 00:00:31.136
-Focus brings TextEdit to the front.
+00:00:56.933 --> 00:01:00.580
+Or exact pixels, when it matters.
+$ windowctl move --app Finder --monitor 1 --x 700 --y 150 --w 900 --h 600
 
-00:00:31.700 --> 00:00:33.772
-Batch applies a whole layout.
+00:01:01.330 --> 00:01:04.796
+Resize — hands off the mouse.
+$ windowctl resize --app Finder --w 640 --h 480
 
-00:00:34.800 --> 00:00:37.429
-Screenshot just the Calculator window.
+00:01:05.546 --> 00:01:09.258
+Launch an app, and wait till it's really there.
+$ windowctl launch --app Calculator && windowctl wait --app Calculator
 
-00:00:37.900 --> 00:00:40.204
-Move the mouse to a found button.
+00:01:10.008 --> 00:01:12.525
+Bring anything forward.
+$ windowctl focus --app TextEdit
 
-00:00:41.000 --> 00:00:43.583
-Click it. Calculator shows seven.
+00:01:13.275 --> 00:01:20.283
+And my favourite — a whole layout in one call. Just like that, everything's home.
+$ echo '[{app,zone}, …]' | windowctl batch
 
-00:00:44.100 --> 00:00:46.358
-Type, with focus checked first.
+00:01:21.033 --> 00:01:25.745
+It can see, too. One window, one screenshot...
+$ windowctl screenshot --app Calculator --out calc.png
 
-00:00:47.200 --> 00:00:49.597
-Press key chords, like command left.
+00:01:26.495 --> 00:01:32.599
+...every pixel's a real screen point, so the mouse lands right on a button...
+$ windowctl mouse move --x -830 --y 769
 
-00:00:50.300 --> 00:00:52.279
-Find the Format menu by name.
+00:01:33.349 --> 00:01:35.741
+...click. Seven.
+$ windowctl mouse click --x -830 --y 769
 
-00:00:53.400 --> 00:00:55.425
-Or find a phrase with OCR.
+00:01:36.491 --> 00:01:40.922
+It types — but only after checking the window really has focus.
+$ windowctl type --app TextEdit --text "windowctl typed this"
 
-00:00:56.500 --> 00:00:58.525
-Draw a big arrow with a sign.
+00:01:41.672 --> 00:01:43.753
+Shortcuts, too.
+$ windowctl key --app TextEdit --combo "cmd+left"
 
-00:00:59.600 --> 00:01:01.672
-Box a window, or ring a point.
+00:01:44.503 --> 00:01:49.948
+Now the good part. Ask for the Format menu — by name.
+$ windowctl draw --app TextEdit --find Format --role menuitem --text "AX: Format menu"
 
-00:01:02.700 --> 00:01:05.236
-Shapes and colours: zigzag, spiral.
+00:01:50.698 --> 00:01:54.124
+No labels? It just reads the screen.
+$ windowctl draw --app TextEdit --find "focus-guarded" --source ocr --style ring
 
-00:01:05.800 --> 00:01:08.197
-Numbered steps stay up with detach.
+00:01:54.874 --> 00:01:59.118
+Then it shows you. A big, friendly arrow...
+$ windowctl draw --monitor 1 --at 900,560 --text "arrow + sign"
 
-00:01:08.900 --> 00:01:10.693
-Draw stop clears them all.
+00:01:59.868 --> 00:02:03.559
+...a box, or a ring, right where it matters.
+$ windowctl draw … --style box   |   --style ring
 
-00:01:12.000 --> 00:01:14.211
-Share your screen to a browser.
+00:02:04.309 --> 00:02:07.073
+Any shape. Any colour.
+$ windowctl draw … --shape zigzag --color purple
 
-00:01:15.100 --> 00:01:17.729
-On Windows, find Notepad's File menu.
+00:02:07.823 --> 00:02:13.644
+Step by step. One: press nine. Two: press plus.
+$ windowctl draw --app Calculator --find "+" --role button --text "2 · press +" --detach
 
-00:01:18.200 --> 00:01:20.365
-OCR works on Windows too.
+00:02:14.394 --> 00:02:17.879
+Done? Gone, in one go.
+$ windowctl draw stop
 
-00:01:21.300 --> 00:01:24.951
-Get windowctl from npm. One binary, three platforms.
+00:02:18.629 --> 00:02:22.605
+Share your screen to any browser — and drive it from there.
+$ windowctl remote --monitor 1
+
+00:02:23.355 --> 00:02:29.516
+Not just a Mac thing. On Windows — same commands, same menu...
+> .\windowctl draw --app notepad --find File --role menuitem --text "AX: File menu"
+
+00:02:30.266 --> 00:02:32.084
+...same eyes.
+> .\windowctl draw --app notepad --find "Find this phrase" --source ocr --style ring
+
+00:02:32.866 --> 00:02:39.320
+One binary. Every screen. Go make your desktop work for you.
+npm install -g @muthuishere/windowctl
